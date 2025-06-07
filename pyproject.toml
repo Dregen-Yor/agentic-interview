@@ -3,14 +3,17 @@ name = "agentic-interview"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
+    "cryptography>=45.0.3",
     "django>=5.2.1",
-    "openai>=1.79.0",
-    "openai-agents>=0.0.15",
+    "djangorestframework>=3.16.0",
+    "djongo>=1.2.31",
+    "langchain>=0.3.25",
+    "langchain-mongodb>=0.6.2",
+    "pyjwt>=2.10.1",
     "pymongo>=4.13.0",
     "python-dotenv>=1.1.0",
-    "tqdm>=4.67.1",
 ]
 
 [[tool.uv.index]]
