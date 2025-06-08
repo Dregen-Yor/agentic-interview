@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 技术面试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f4f7f9;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        #chat-container {
+            width: 90%;
+            max-width: 800px;
+            height: 90vh;
+            max-height: 900px;
+            display: flex;
+            flex-direction: column;
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        #chat-header {
+            padding: 20px;
+            background-color: #4a90e2;
+            color: white;
+            font-size: 1.2em;
+            font-weight: bold;
+            text-align: center;
+            border-bottom: 1px solid #ddd;
+        }
+        #chat-messages {
+            flex-grow: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        .message {
+            max-width: 80%;
+            padding: 12px 18px;
+            border-radius: 20px;
+            margin-bottom: 15px;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+        .user-message {
+            background-color: #4a90e2;
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 5px;
+        }
+        .ai-message {
+            background-color: #e9ebee;
+            color: #333;
+            align-self: flex-start;
+            border-bottom-left-radius: 5px;
+        }
+        #chat-form {
+            display: flex;
+            padding: 20px;
+            border-top: 1px solid #eee;
+        }
+        #message-input {
+            flex-grow: 1;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 20px;
+            font-size: 1em;
+            margin-right: 10px;
+            outline: none;
+        }
+        #message-input:focus {
+            border-color: #4a90e2;
+        }
+        #send-button {
+            padding: 12px 25px;
+            background-color: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+        #send-button:hover {
+            background-color: #357abd;
+        }
+        .typing-indicator {
+            align-self: flex-start;
+            margin-bottom: 15px;
+        }
+        .typing-indicator span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #aaa;
+            margin: 0 2px;
+            animation: bounce 1s infinite;
+        }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.1s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.2s; }
+        @keyframes bounce {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-5px); }
+        }
+    </style>
+</head>
+<body>
+    <div id="chat-container">
+        <div id="chat-header">AI 技术面试官</div>
+        <div id="chat-messages">
+             <div class="message ai-message">你好，我是你的AI技术面试官。请输入候选人的姓名开始面试。</div>
+        </div>
+        <form id="chat-form">
+            <input type="text" id="message-input" placeholder="输入消息..." autocomplete="off">
+            <button type="submit" id="send-button">发送</button>
+        </form>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const chatForm = document.getElementById('chat-form');
+            const messageInput = document.getElementById('message-input');
+            const chatMessages = document.getElementById('chat-messages');
+
+            chatForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const message = messageInput.value.trim();
+                if (!message) return;
+
+                appendMessage(message, 'user-message');
+                messageInput.value = '';
+                showTypingIndicator();
+
+                try {
+                    const response = await fetch(window.location.href, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            // Django's @csrf_exempt handles this, but for other setups you'd need a token
+                        },
+                        body: JSON.stringify({ message: message })
+                    });
+                    
+                    removeTypingIndicator();
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || '服务器响应错误');
+                    }
+
+                    const data = await response.json();
+                    appendMessage(data.response, 'ai-message');
+
+                } catch (error) {
+                    console.error('Error:', error);
+                    appendMessage(`出现错误: ${error.message}`, 'ai-message');
+                }
+            });
+
+            function appendMessage(message, className) {
+                const messageElement = document.createElement('div');
+                messageElement.classList.add('message', className);
+                messageElement.textContent = message;
+                chatMessages.appendChild(messageElement);
+                chatMessages.scrollTop = chatMessages.scrollHeight; // 自动滚动到底部
+            }
+            
+            function showTypingIndicator() {
+                const indicator = document.createElement('div');
+                indicator.classList.add('message', 'typing-indicator');
+                indicator.innerHTML = '<span></span><span></span><span></span>';
+                chatMessages.appendChild(indicator);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+
+            function removeTypingIndicator() {
+                const indicator = document.querySelector('.typing-indicator');
+                if (indicator) {
+                    indicator.remove();
+                }
+            }
+        });
+    </script>
+</body>
+</html> 

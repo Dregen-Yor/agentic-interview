@@ -16,8 +16,7 @@
                 <el-icon><Files /></el-icon>
                 <span>简历管理</span>
             </template>
-            <el-menu-item index="/newcv">新建简历</el-menu-item>
-            <el-menu-item index="/resumerewriter">简历优化</el-menu-item>
+            <el-menu-item index="/resumerewriter">我的简历</el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="interview-process">
             <template #title>

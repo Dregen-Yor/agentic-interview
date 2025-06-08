@@ -1,3 +1,5 @@
+import os
+import django
 from django.http import JsonResponse
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
@@ -8,11 +10,14 @@ import jwt
 from datetime import datetime, timedelta, timezone
 from bson.objectid import ObjectId
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # --- HELPER FUNCTION TO GET DB ---
 def get_db():
     """Helper function to connect to MongoDB and get the database."""
-    client = pymongo.MongoClient(settings.MONGO_URI)
-    db = client[settings.MONGO_DATABASE_NAME]
+    client = pymongo.MongoClient(os.getenv("MONGODB_URI"))
+    db = client[os.getenv("MONGODB_DB")]
     return db, client
 
 # --- REPLACEMENT for create_user ---
@@ -208,4 +213,93 @@ def update_user_resume(request):
         return JsonResponse({'error': 'Invalid JSON in request body'}, status=400)
     except Exception as e:
         return JsonResponse({'error': 'An unexpected error occurred', 'details': str(e)}, status=500)
+
+@csrf_exempt
+def get_interview_result(request):
+    """Gets a user's interview result, requires JWT authentication."""
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method is allowed'}, status=405)
+    
+    try:
+        # Token validation
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return JsonResponse({'error': 'Authorization header missing or invalid'}, status=401)
+        
+        token = auth_header.split(' ')[1]
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
+        username = payload['name']
+
+        # Get interview result from database
+        db, client = get_db()
+        result_collection = db['result']
+        
+        # Find the latest result for the user by sorting by timestamp descending
+        latest_result = result_collection.find_one(
+            {'name': username},
+            sort=[('timestamp', pymongo.DESCENDING)]
+        )
+        client.close()
+
+        if not latest_result:
+            return JsonResponse({'error': 'Interview result not found for the user'}, status=404)
+        
+        # Convert ObjectId to string for JSON serialization
+        latest_result['_id'] = str(latest_result['_id'])
+        # Convert datetime to string
+        latest_result['timestamp'] = latest_result['timestamp'].isoformat()
+        
+        return JsonResponse({'result': latest_result}, status=200)
+
+    except jwt.ExpiredSignatureError:
+        return JsonResponse({'error': 'Token has expired'}, status=401)
+    except jwt.InvalidTokenError:
+        return JsonResponse({'error': 'Invalid token'}, status=401)
+    except Exception as e:
+        return JsonResponse({'error': 'An unexpected error occurred', 'details': str(e)}, status=500)
+
+
+@csrf_exempt
+def update_interview_result(request):
+    """Updates a user's interview result, requires JWT authentication."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method is allowed'}, status=405)
+
+    try:
+        # Token validation
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return JsonResponse({'error': 'Authorization header missing or invalid'}, status=401)
+        
+        token = auth_header.split(' ')[1]
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
+        username = payload['name']
+
+        # Get new result from request body
+        request_data = json.loads(request.body)
+        new_result = request_data.get('result')
+
+        if new_result is None:
+            return JsonResponse({'error': 'Missing "result" in request body'}, status=400)
+
+        # Update database
+        db, client = get_db()
+        result_collection = db['result']
+        result_collection.update_one(
+            {'name': username},
+            {'$set': {'result': new_result}}
+        )
+        client.close()
+
+        return JsonResponse({'message': 'Interview result updated successfully'}, status=200)
+
+    except jwt.ExpiredSignatureError:
+        return JsonResponse({'error': 'Token has expired'}, status=401)
+    except jwt.InvalidTokenError:
+        return JsonResponse({'error': 'Invalid token'}, status=401)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON in request body'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': 'An unexpected error occurred', 'details': str(e)}, status=500)
+
     

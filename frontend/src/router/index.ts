@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import type { RouteRecordRaw } from 'vue-router';
 import MainLayout from '../layout/MainLayout.vue'; // 您的主布局组件
+import { useAuth } from "../stores/auth";
 
 // 定义路由规则
 // 我们将使用组件的懒加载来优化初始加载速度
@@ -124,13 +125,13 @@ router.beforeEach(async (to, from, next) => {
   const defaultTitle = 'AI Interview Platform';
   document.title = to.meta.title ? `${to.meta.title} - ${defaultTitle}` : defaultTitle;
 
+  const auth = useAuth();
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth);
-  const tokenExists = !!localStorage.getItem('user-token');
 
   if (requiresAuth) {
-    if (tokenExists) {
+    if (auth.isLoggedIn) {
       // 如果 token 存在，调用后端 API 验证
-      const isTokenValid = await verifyToken();
+      const isTokenValid = await auth.verifyToken();
       if (isTokenValid) {
         next(); // Token 有效，继续导航
       } else {
@@ -142,18 +143,18 @@ router.beforeEach(async (to, from, next) => {
       // 如果需要授权但没有 token，重定向到登录页
       next({ name: 'Login', query: { redirect: to.fullPath } });
     }
-  } else if (to.name === 'Login' && tokenExists) {
+  } else if (to.name === 'Login' && auth.isLoggedIn) {
     // 如果用户已登录（本地有token），尝试访问登录页时，直接重定向到首页
     // 为避免循环重定向，我们在这里也最好验证一下token
-    const isTokenValid = await verifyToken();
+    const isTokenValid = await auth.verifyToken();
     if (isTokenValid) {
       next({ name: 'Home' });
     } else {
-      next(); 
+      next();
     }
   }
   else {
-    next(); 
+    next();
   }
 });
 
