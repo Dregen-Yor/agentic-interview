@@ -2,6 +2,8 @@ import os
 import sys
 from typing import List, Optional
 import datetime
+import json
+import requests
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -11,7 +13,6 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 import pymongo
 from bson import json_util, ObjectId
-import json
 
 # --- 加载环境变量 ---
 # 将父目录添加到 sys.path 以便导入 llm_proxy 中的模型
@@ -39,6 +40,27 @@ db = client[os.getenv("MONGODB_DB")]
 resumes_collection = db["resumes"]
 users_collection = db["users"]
 result_collection = db["result"]
+problem_collection = db["problem"]
+
+# --- Embedding model settings ---
+# Note: Make sure you are running ollama and have the model: ollama run Q78KG/gte-Qwen2-7B-instruct:latest
+EMBEDDING_API_URL = "http://localhost:11434/api/embeddings"
+EMBEDDING_MODEL = "Q78KG/gte-Qwen2-7B-instruct:latest"
+
+
+def get_embedding(text: str) -> Optional[List[float]]:
+    """
+    Generates an embedding for the given text using a local model API.
+    """
+    try:
+        payload = {"model": EMBEDDING_MODEL, "prompt": text}
+        response = requests.post(EMBEDDING_API_URL, json=payload)
+        response.raise_for_status()
+        return response.json().get("embedding")
+    except requests.exceptions.RequestException as e:
+        print(f"Error generating embedding: {e}")
+        return None
+
 
 @tool
 def getResumeByName(name: str) -> dict:
@@ -80,7 +102,54 @@ def changeInterView(name: str, comment: str, result: bool) -> str:
     return "面试结果已成功记录到数据库。"
 
 
-# --- 创建 Agent ---
+@tool
+def rag_search(query: str) -> str:
+    """
+    使用向量搜索在知识库中查找与查询相关的信息。
+    知识库中包含编程问题、概念和最佳实践。
+    当你需要回答技术问题、评估候选人的技术知识或提供编程示例时，请使用此工具。
+    """
+    print(f"--- TOOL CALLED: rag_search with query='{query}' ---")
+
+    query_embedding = get_embedding(query)
+    if not query_embedding:
+        return "抱歉，无法为您的查询生成向量，无法进行搜索。"
+
+    pipeline = [
+        {
+            "$vectorSearch": {
+                "index": "vector_index",
+                "path": "content_vector",
+                "queryVector": query_embedding,
+                "numCandidates": 100,
+                "limit": 3,
+            }
+        },
+        {
+            "$project": {
+                "_id": 0,
+                "content": 1,
+                "score": {"$meta": "vectorSearchScore"},
+            }
+        },
+    ]
+
+    try:
+        results = list(problem_collection.aggregate(pipeline))
+        if not results:
+            return "在知识库中没有找到相关信息。"
+
+        # Format the results
+        formatted_results = "从知识库中找到以下相关信息：\n\n"
+        for i, doc in enumerate(results):
+            formatted_results += f"--- 相关文档 {i+1} (相似度: {doc['score']:.4f}) ---\n"
+            formatted_results += doc.get("content", "没有内容。") + "\n\n"
+
+        return formatted_results.strip()
+
+    except Exception as e:
+        return f"执行 RAG 搜索时出错: {e}"
+
 
 def create_interviewer_agent(memory=None):
     """
@@ -110,7 +179,7 @@ def create_interviewer_agent(memory=None):
     )
 
     # 3. 定义工具列表
-    tools = [getResumeByName, changeInterView]
+    tools = [getResumeByName, changeInterView, rag_search]
 
     # 4. 创建 Agent
     # 将模型、工具和 Prompt 结合在一起，创建一个能够调用工具的 Agent

@@ -3,7 +3,7 @@ import axios from 'axios';
 
 // 设置 axios 实例的基础配置
 const apiClient = axios.create({
-    baseURL: 'http://127.0.0.1:8000',
+    baseURL: 'http://101.76.218.89:8000',
     headers: {
         'Content-Type': 'application/json',
     }
@@ -77,7 +77,7 @@ export const useAuth = defineStore('auth', {
                 throw new Error('Authentication token not found.');
             }
             try {
-                const response = await apiClient.get('http://127.0.0.1:8000/api/result/');
+                const response = await apiClient.get('http://101.76.218.89:8000/api/result/');
                 return response.data;
             } catch (error: any) {
                 const message = error.response?.data?.error || error.message || 'Failed to fetch interview result';

@@ -33,7 +33,7 @@ async function fetchResume() {
 
   try {
     
-    const response = await axios.get('http://127.0.0.1:8000/api/resume/', {
+    const response = await axios.get('http://101.76.218.89:8000/api/resume/', {
       headers: {
         'Authorization': `Bearer ${token}`
       }
@@ -63,7 +63,7 @@ async function updateResume() {
 
   isUpdating.value = true;
   try {
-    await axios.post('http://127.0.0.1:8000/api/resume/update/', { content: resumeContent.value }, {
+    await axios.post('http://101.76.218.89:8000/api/resume/update/', { content: resumeContent.value }, {
       headers: {
         'Authorization': `Bearer ${token}`
       }
