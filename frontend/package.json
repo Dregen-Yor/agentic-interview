@@ -11,6 +11,15 @@
     "build-only": "vite build",
     "type-check": "vue-tsc --build"
   },
+  "_scripts_description": {
+    "_comment": "脚本说明",
+    "dev": "启动开发服务器",
+    "build": "构建生产版本（包括类型检查）",
+    "preview": "预览生产构建",
+    "test:unit": "运行单元测试",
+    "build-only": "仅构建，不进行类型检查",
+    "type-check": "TypeScript类型检查"
+  },
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^6.7.2",
     "@fortawesome/free-solid-svg-icons": "^6.7.2",
@@ -22,6 +31,17 @@
     "vue": "^3.5.13",
     "vue-router": "^4.5.0",
     "vue3-lottie": "^3.3.1"
+  },
+  "_dependencies_description": {
+    "_comment": "生产依赖说明",
+    "@fortawesome/*": "FontAwesome图标库",
+    "axios": "HTTP客户端库",
+    "element-plus": "Vue 3 UI组件库",
+    "lottie-web": "Lottie动画库",
+    "pinia": "Vue状态管理库",
+    "vue": "Vue 3核心框架",
+    "vue-router": "Vue官方路由库",
+    "vue3-lottie": "Vue 3 Lottie组件"
   },
   "devDependencies": {
     "@tsconfig/node22": "^22.0.1",
@@ -37,5 +57,19 @@
     "vite-plugin-vue-devtools": "^7.7.2",
     "vitest": "^3.1.1",
     "vue-tsc": "^2.2.8"
+  },
+  "_devDependencies_description": {
+    "_comment": "开发依赖说明",
+    "@tsconfig/node22": "Node.js 22 TypeScript配置",
+    "@types/*": "TypeScript类型定义",
+    "@vitejs/plugin-vue": "Vite的Vue插件",
+    "@vue/*": "Vue相关开发工具",
+    "jsdom": "DOM环境模拟器（用于测试）",
+    "npm-run-all2": "并行运行npm脚本",
+    "typescript": "TypeScript编译器",
+    "vite": "现代前端构建工具",
+    "vite-plugin-vue-devtools": "Vue开发者工具插件",
+    "vitest": "基于Vite的测试框架",
+    "vue-tsc": "Vue TypeScript编译器"
   }
 }

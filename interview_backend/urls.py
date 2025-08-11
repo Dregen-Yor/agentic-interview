@@ -1,23 +1,24 @@
 """
-URL configuration for interview_backend project.
+面试后端项目的URL配置。
 
-The `urlpatterns` list routes URLs to views. For more information please see:
+`urlpatterns`列表将URL路由到视图。更多信息请参阅：
     https://docs.djangoproject.com/en/5.1/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
+示例：
+函数视图
+    1. 添加导入：from my_app import views
+    2. 向urlpatterns添加URL：path('', views.home, name='home')
+基于类的视图
+    1. 添加导入：from other_app.views import Home
+    2. 向urlpatterns添加URL：path('', Home.as_view(), name='home')
+包含另一个URLconf
+    1. 导入include()函数：from django.urls import include, path
+    2. 向urlpatterns添加URL：path('blog/', include('blog.urls'))
 """
-# from django.contrib import admin
+# from django.contrib import admin  # 管理后台（已注释）
 from django.urls import path, include
 
+# URL模式配置
 urlpatterns = [
-    # path('admin/', admin.site.urls),
-    path('api/', include('interview.urls')),
+    # path('admin/', admin.site.urls),  # 管理后台URL（已注释）
+    path('api/', include('interview.urls')),  # 面试API路由
 ]

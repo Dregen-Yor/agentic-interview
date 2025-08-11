@@ -1,30 +1,34 @@
+# Python项目配置文件 - 基于PEP 518标准
 [project]
-name = "agentic-interview"
-version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-requires-python = ">=3.12"
+name = "agentic-interview"                      # 项目名称
+version = "0.1.0"                               # 项目版本
+description = "AI驱动的智能面试平台"              # 项目描述
+readme = "README.md"                            # 说明文档
+requires-python = ">=3.12"                     # Python版本要求
+
+# 项目依赖列表
 dependencies = [
-    "asgiref>=3.8.1",
-    "channels>=4.2.2",
-    "channels-redis>=4.2.1",
-    "cryptography>=45.0.3",
-    "daphne>=4.2.0",
-    "django>=5.2.1",
-    "django-cors-headers>=4.7.0",
-    "djangorestframework>=3.16.0",
-    "djongo>=1.2.31",
-    "langchain>=0.3.25",
-    "langchain-community>=0.3.24",
-    "langchain-mongodb>=0.6.2",
-    "langchain-openai>=0.3.21",
-    "pip>=25.1.1",
-    "pyjwt>=2.10.1",
-    "pymongo>=4.13.0",
-    "python-dotenv>=1.1.0",
-    "tqdm>=4.67.1",
+    "asgiref>=3.8.1",                 # ASGI参考实现，用于Django异步支持
+    "channels>=4.2.2",                # Django Channels，WebSocket支持
+    "channels-redis>=4.2.1",          # Channels的Redis层，用于消息传递
+    "cryptography>=45.0.3",           # 加密算法库
+    "daphne>=4.2.0",                  # ASGI服务器
+    "django>=5.2.1",                  # Django Web框架
+    "django-cors-headers>=4.7.0",     # Django CORS中间件
+    "djangorestframework>=3.16.0",    # Django REST API框架
+    "djongo>=1.2.31",                 # Django MongoDB连接器
+    "langchain>=0.3.25",              # LangChain核心框架，用于AI应用开发
+    "langchain-community>=0.3.24",    # LangChain社区组件
+    "langchain-mongodb>=0.6.2",       # LangChain MongoDB集成
+    "langchain-openai>=0.3.21",       # LangChain OpenAI集成
+    "pip>=25.1.1",                    # Python包管理工具
+    "pyjwt>=2.10.1",                  # JWT令牌处理库
+    "pymongo>=4.13.0",                # MongoDB Python驱动
+    "python-dotenv>=1.1.0",           # 环境变量文件支持
+    "tqdm>=4.67.1",                   # 进度条显示库
 ]
 
+# UV包管理器配置
 [[tool.uv.index]]
-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
-default = true
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"  # 使用清华大学PyPI镜像源
+default = true                                      # 设为默认源
