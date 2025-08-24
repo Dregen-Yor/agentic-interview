@@ -4,15 +4,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-print(os.getenv("DEEPSEEK_API_KEY"))
 deep_seek_model = ChatOpenAI(
-    model="deepseek-r1-250528",
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://ark.cn-beijing.volces.com/api/v3/",
+    model="deepseek-v3.1",
+    api_key=os.getenv("ALIYUN_API_KEY"),
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
 
 gemini_model = ChatOpenAI(
-    model="gemini-2.5-flash",
-    api_key=os.getenv("GEMINI_API_KEY"),
-    base_url="https://0-0.pro/v1",
+    model="qwen-plus",
+    api_key=os.getenv("ALIYUN_API_KEY"),
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
