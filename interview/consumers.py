@@ -1,5 +1,7 @@
 import json
 import asyncio
+import httpx
+import base64
 from channels.generic.websocket import AsyncWebsocketConsumer
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain.memory import ConversationBufferMemory
@@ -42,7 +44,7 @@ class InterviewConsumer(AsyncWebsocketConsumer):
         if self.count==0 and username:
             final_input = f"你好，我是候选人 {username}，请获取我的简历并开始面试。"
         elif user_input:
-            final_input = user_input + f" 这是第{self.count}次回答"
+            final_input = user_input
         else:
             return
         self.count+=1
@@ -60,10 +62,31 @@ class InterviewConsumer(AsyncWebsocketConsumer):
         response = self.agent_executor.invoke({"input": user_input})
         ai_response = response.get("output", "抱歉，处理时遇到问题，请重试。")
 
+        # 调用 TTS API 将文本转换为语音
+        audio_content_base64 = None
+        # The user provided this TTS service endpoint.
+        tts_url = "http://101.76.216.150:9880/"
+        params = {"text": ai_response, "text_language": "zh"}
+
+        try:
+            async with httpx.AsyncClient() as client:
+                # 设置较长的超时以应对可能的慢响应
+                tts_response = await client.get(tts_url, params=params, timeout=30.0)
+                if tts_response.status_code == 200:
+                    audio_content = tts_response.content
+                    audio_content_base64 = base64.b64encode(audio_content).decode('utf-8')
+                else:
+                    # 记录来自 TTS 服务的错误信息
+                    print(f"Error from TTS API: Status {tts_response.status_code}, Response: {tts_response.text}")
+        except Exception as e:
+            # 记录请求过程中的异常
+            print(f"Exception while calling TTS API: {e}")
+
         # 构造要发送的数据
         message_to_send = {
             'response': ai_response,
-            'type': 'message'
+            'type': 'message',
+            'audio': audio_content_base64, # 添加 base64 编码的音频数据
         }
 
         # 检测面试是否结束

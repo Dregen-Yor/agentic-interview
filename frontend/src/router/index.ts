@@ -29,13 +29,6 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: '新建简历' ,requiresAuth: true}
       },
       {
-        path: 'modifycv/:id?', // 对应 Hilla 的 ModifyCv.tsx, :id? 表示 id 是可选参数
-        name: 'ModifyCv',
-        component: () => import('../views/ModifyCvView.vue'),
-        props: true, // 将路由参数作为 props 传递给组件
-        meta: { title: '修改简历' ,requiresAuth: true}
-      },
-      {
         path: 'resumerewriter', // 对应 Hilla 的 resumeRewriter.tsx
         name: 'ResumeRewriter',
         component: () => import('../views/ResumeRewriterView.vue'),

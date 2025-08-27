@@ -118,7 +118,7 @@ const connectWebSocket = () => {
   socket.value.onmessage = (event) => {
     const data = JSON.parse(event.data);
     if (data.type === 'message') {
-      handleBackendTextResponse(data.response);
+      handleBackendTextResponse(data);
       if (data.status === 'completed') {
         isCompleted.value = true;
         socket.value?.close();
@@ -213,22 +213,60 @@ const handleVerificationSuccess = () => {
   isFaceVerified.value = true;
 };
 
-const handleBackendTextResponse = (text: string) => {
-  backendResponseText.value = text;
+const handleBackendTextResponse = (data: { response: string, audio?: string | null }) => {
+  backendResponseText.value = data.response;
   isProcessing.value = false;
-  isPlaying.value = true;
 
-  // Simulate audio playback time
-  const readingTime = Math.max(3000, text.length * 150); // 150ms per character, min 3s
+  const fallbackToTimer = () => {
+    // 模拟音频播放时间
+    const readingTime = Math.max(3000, data.response.length * 150); // 150ms per character, min 3s
+    isPlaying.value = true;
+    setTimeout(() => {
+      isPlaying.value = false;
+      if (!isCompleted.value) {
+        showAnswerButton.value = true;
+      }
+    }, readingTime);
+  }
 
-  setTimeout(() => {
-    isPlaying.value = false;
-    showAnswerButton.value = true;
-    // Do not automatically start recording. Let the user decide when to answer.
-    // if (!isCompleted.value) {
-    //   startRecording();
-    // }
-  }, readingTime);
+  if (data.audio) {
+    try {
+      const byteCharacters = atob(data.audio);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const audioBlob = new Blob([byteArray], { type: 'audio/wav' });
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+
+      isPlaying.value = true;
+      audio.play().catch(e => {
+        console.error("Audio play failed:", e);
+        fallbackToTimer();
+      });
+
+      audio.onended = () => {
+        isPlaying.value = false;
+        if (!isCompleted.value) {
+          showAnswerButton.value = true;
+        }
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      audio.onerror = (e) => {
+        console.error("Audio playback error:", e);
+        URL.revokeObjectURL(audioUrl);
+        fallbackToTimer();
+      };
+    } catch (e) {
+      console.error("Error processing audio data:", e);
+      fallbackToTimer();
+    }
+  } else {
+    fallbackToTimer();
+  }
 };
 
 const startInterview = async () => {
