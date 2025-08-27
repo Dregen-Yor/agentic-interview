@@ -100,7 +100,7 @@ const speechErrorText = ref('');
 const connectWebSocket = () => {
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   // Assuming backend runs on the same host but port 8000
-  const wsUrl = `${wsProtocol}//127.0.0.1:8000/ws/interview/${chatId.value}/`;
+  const wsUrl = `${wsProtocol}//101.76.218.89:8000/ws/interview/${chatId.value}/`;
 
   socket.value = new WebSocket(wsUrl);
 

@@ -3,100 +3,197 @@ import asyncio
 import httpx
 import base64
 from channels.generic.websocket import AsyncWebsocketConsumer
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain.memory import ConversationBufferMemory
-from .interviewer_agent import create_interviewer_agent
+from .agents import MultiAgentCoordinator
+from .llm import deep_seek_model, gemini_model
 
 class InterviewConsumer(AsyncWebsocketConsumer):
     """
     处理面试 WebSocket 连接的 Consumer。
-    为每个连接创建一个独立的 Agent 实例和聊天记录。
+    使用多智能体系统进行面试管理。
     """
     async def connect(self):
         # 从 URL 中获取 chatId
         self.chat_id = self.scope['url_route']['kwargs']['chat_id']
         self.group_name = f"interview_{self.chat_id}"
-        self.count=0
-        # 为每个连接创建独立的 Memory
-        # `return_messages=True` 确保 memory 返回的是消息对象列表，而不是单个字符串
-        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+        self.interview_started = False
         
-        # 创建 Agent，并传入 memory
-        self.agent_executor = create_interviewer_agent(memory=self.memory)
-
+        # 初始化多智能体协调器
+        models = {
+            "question_model": deep_seek_model,
+            "scoring_model": deep_seek_model,
+            "security_model": gemini_model,  # 使用不同模型进行安全检测
+            "summary_model": deep_seek_model
+        }
+        self.coordinator = MultiAgentCoordinator(models)
+        
         # 加入 Channel Layer 组
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
+        
+        print(f"WebSocket连接已建立: {self.chat_id}")
 
     async def disconnect(self, close_code):
+        # 清理面试会话
+        if hasattr(self, 'coordinator'):
+            self.coordinator.cleanup_session(self.chat_id)
+        
         # 离开 Channel Layer 组
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
+        
+        print(f"WebSocket连接已断开: {self.chat_id}")
 
     async def receive(self, text_data):
         """
-        从 WebSocket 接收消息，调用 Agent，并返回结果。
+        从 WebSocket 接收消息，处理面试流程。
         """
-        data = json.loads(text_data)
-        user_input = data.get('message')
-        username = data.get('username')
-
-        # 仅在对话刚开始（memory为空）且提供了用户名时，构造特殊输入以触发简历获取
-        if self.count==0 and username:
-            final_input = f"你好，我是候选人 {username}，请获取我的简历并开始面试。"
-        elif user_input:
-            final_input = user_input
-        else:
-            return
-        self.count+=1
-        print(self.count)
-        print(self.memory.chat_memory.messages)
-        # 在后台任务中运行 Agent 调用，以避免阻塞 WebSocket 连接
-        asyncio.create_task(self.run_agent(final_input))
-
-    async def run_agent(self, user_input):
-        """
-        运行 agent 并将结果发送回客户端。
-        如果检测到面试结束，则发送消息后关闭连接。
-        """
-        # 调用 Agent。由于使用了 Memory，不再需要手动传递 chat_history
-        response = self.agent_executor.invoke({"input": user_input})
-        ai_response = response.get("output", "抱歉，处理时遇到问题，请重试。")
-
-        # 调用 TTS API 将文本转换为语音
-        audio_content_base64 = None
-        # The user provided this TTS service endpoint.
-        tts_url = "http://101.76.216.150:9880/"
-        params = {"text": ai_response, "text_language": "zh"}
-
         try:
+            data = json.loads(text_data)
+            user_input = data.get('message', '')
+            username = data.get('username')
+            
+            # 如果面试还未开始且提供了用户名，启动面试
+            if not self.interview_started and username:
+                asyncio.create_task(self.start_interview(username))
+                self.interview_started = True
+            elif user_input and self.interview_started:
+                # 处理用户回答
+                asyncio.create_task(self.process_user_answer(user_input))
+            else:
+                await self.send_error("无效的输入格式")
+                
+        except json.JSONDecodeError:
+            await self.send_error("无效的JSON格式")
+        except Exception as e:
+            print(f"接收消息时发生错误: {e}")
+            await self.send_error("处理消息时发生错误")
+
+    async def start_interview(self, candidate_name: str):
+        """
+        启动面试流程
+        """
+        try:
+            result = self.coordinator.start_interview(self.chat_id, candidate_name)
+            
+            if result["success"]:
+                # 发送首个问题
+                message = {
+                    'type': 'question',
+                    'question': result["first_question"],
+                    'question_type': result.get("question_type", "opening"),
+                    'message': result["message"]
+                }
+                
+                # 添加TTS音频
+                audio_base64 = await self.generate_tts_audio(result["first_question"])
+                if audio_base64:
+                    message['audio'] = audio_base64
+                
+                await self.send(text_data=json.dumps(message))
+            else:
+                await self.send_error(result["message"])
+                
+        except Exception as e:
+            print(f"启动面试时发生错误: {e}")
+            await self.send_error("启动面试时发生系统错误")
+    
+    async def process_user_answer(self, user_answer: str):
+        """
+        处理用户回答
+        """
+        try:
+            result = self.coordinator.process_answer(self.chat_id, user_answer)
+            
+            if result["success"]:
+                if result.get("interview_complete"):
+                    # 面试结束
+                    message = {
+                        'type': 'interview_complete',
+                        'final_decision': result["final_decision"],
+                        'overall_score': result["overall_score"],
+                        'summary': result["summary"],
+                        'total_questions': result["total_questions"],
+                        'average_score': result["average_score"],
+                        'message': result["message"]
+                    }
+                    
+                    # 添加TTS音频
+                    completion_message = f"面试已完成。{result['message']}"
+                    audio_base64 = await self.generate_tts_audio(completion_message)
+                    if audio_base64:
+                        message['audio'] = audio_base64
+                    
+                    await self.send(text_data=json.dumps(message))
+                    
+                    # 延迟关闭连接
+                    await asyncio.sleep(2)
+                    await self.close()
+                else:
+                    # 继续面试，发送下一个问题
+                    message = {
+                        'type': 'question',
+                        'question': result["next_question"],
+                        'question_type': result.get("question_type", "technical"),
+                        'score': result["score"],
+                        'current_average': result["current_average"],
+                        'total_questions': result["total_questions"]
+                    }
+                    
+                    if result.get("security_warning"):
+                        message['security_warning'] = "请注意您的回答内容"
+                    
+                    # 添加TTS音频
+                    audio_base64 = await self.generate_tts_audio(result["next_question"])
+                    if audio_base64:
+                        message['audio'] = audio_base64
+                    
+                    await self.send(text_data=json.dumps(message))
+            else:
+                if result.get("security_alert"):
+                    # 安全警报
+                    await self.send_security_warning(result["message"])
+                else:
+                    await self.send_error(result["message"])
+                    
+        except Exception as e:
+            print(f"处理用户回答时发生错误: {e}")
+            await self.send_error("处理回答时发生系统错误")
+    
+    async def generate_tts_audio(self, text: str) -> str:
+        """
+        生成TTS音频并返回base64编码
+        """
+        try:
+            tts_url = "http://101.76.216.150:9880/"
+            params = {"text": text, "text_language": "zh"}
+            
             async with httpx.AsyncClient() as client:
-                # 设置较长的超时以应对可能的慢响应
                 tts_response = await client.get(tts_url, params=params, timeout=30.0)
                 if tts_response.status_code == 200:
                     audio_content = tts_response.content
-                    audio_content_base64 = base64.b64encode(audio_content).decode('utf-8')
+                    return base64.b64encode(audio_content).decode('utf-8')
                 else:
-                    # 记录来自 TTS 服务的错误信息
-                    print(f"Error from TTS API: Status {tts_response.status_code}, Response: {tts_response.text}")
+                    print(f"TTS API错误: Status {tts_response.status_code}")
+                    return None
         except Exception as e:
-            # 记录请求过程中的异常
-            print(f"Exception while calling TTS API: {e}")
-
-        # 构造要发送的数据
-        message_to_send = {
-            'response': ai_response,
-            'type': 'message',
-            'audio': audio_content_base64, # 添加 base64 编码的音频数据
+            print(f"TTS生成异常: {e}")
+            return None
+    
+    async def send_error(self, error_message: str):
+        """
+        发送错误消息
+        """
+        message = {
+            'type': 'error',
+            'message': error_message
         }
-
-        # 检测面试是否结束
-        is_completed = "[再见]" in ai_response or "再见" in ai_response
-        if is_completed:
-            message_to_send['status'] = 'completed'
-
-        # 发送响应回 WebSocket
-        await self.send(text_data=json.dumps(message_to_send))
-
-        # 如果面试结束，则在发送完消息后关闭连接
-        if is_completed:
-            await self.close() 
+        await self.send(text_data=json.dumps(message))
+    
+    async def send_security_warning(self, warning_message: str):
+        """
+        发送安全警告
+        """
+        message = {
+            'type': 'security_warning',
+            'message': warning_message
+        }
+        await self.send(text_data=json.dumps(message)) 
