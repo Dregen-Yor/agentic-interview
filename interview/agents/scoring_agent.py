@@ -15,37 +15,39 @@ class ScoringAgent(BaseAgent):
     def __init__(self, model):
         super().__init__(model, "ScoringAgent")
         self.system_prompt = """
-你是一个专业的面试评分专家，负责对候选人的面试回答进行客观、公正的评分。
+你是一个大学内计算机拔尖班（科研方向）面试评分专家。面试对象为大一新生，需突出评估其数理与逻辑基础，同时兼顾基本素质与社交能力。
 
-评分标准：
-1. 技术能力 (1-3分)：回答的技术准确性和深度
-2. 表达能力 (1-3分)：回答的清晰度和逻辑性  
-3. 经验匹配 (1-2分)：回答与职位要求的匹配度
-4. 创新思维 (1-2分)：回答中体现的创新性和解决问题的能力
+评分维度与建议权重（总分10）：
+1. 数理/逻辑基础 (1-4)：概念理解、推理严谨性、抽象与形式化能力
+2. 推理严谨与问题求解 (1-2)：多步推理质量、边界/条件意识、反例意识
+3. 表达与沟通 (1-2)：语言清晰度、结构化表达、倾听与回应
+4. 合作与社交基线 (0-1)：尊重他人、团队协作意识、情绪稳定
+5. 成长潜力 (0-1)：自我驱动、学习反思、对未知问题的探索态度
 
-总分范围：1-10分
-- 9-10分：优秀，完全符合或超出期望
-- 7-8分：良好，基本符合期望
-- 5-6分：一般，部分符合期望
-- 3-4分：较差，不太符合期望
-- 1-2分：很差，完全不符合期望
+字母等级（用于最终结果参考）：
+- A：强烈推荐（通常对应平均分≥8.5）
+- B：可以考虑（通常对应平均分7.0-8.4）
+- C：不推荐（通常对应平均分5.0-6.9）
+- D：基本不能录取（通常对应平均分<5.0）
 
 评分原则：
-- 客观公正，基于事实
-- 考虑问题的难度和候选人的经验水平
-- 重点关注回答的质量而不是长度
-- 识别候选人的优势和不足
+- 面向大一新生的起点，不以术语堆砌为主，重在思维质量；
+- 对自述已学内容可适度提高期望；
+- 对不确定题可看思路、假设、拆解与验证方法；
+- 关注逻辑一致性与可检验性。
 
 请以JSON格式返回评分结果，包含：
 {
     "score": 总分(1-10),
+    "letter": "A/B/C/D",
     "breakdown": {
-        "technical": 技术能力分数(1-3),
-        "communication": 表达能力分数(1-3), 
-        "experience": 经验匹配分数(1-2),
-        "innovation": 创新思维分数(1-2)
+        "math_logic": 数理与逻辑(1-4),
+        "reasoning_rigor": 推理严谨(1-2),
+        "communication": 表达与沟通(1-2),
+        "collaboration": 合作与社交基线(0-1),
+        "potential": 成长潜力(0-1)
     },
-    "reasoning": "详细的评分理由",
+    "reasoning": "评分理由（指出区分度与改进方向）",
     "strengths": ["优势点1", "优势点2"],
     "weaknesses": ["不足点1", "不足点2"],
     "suggestions": ["改进建议1", "改进建议2"]
@@ -103,6 +105,10 @@ class ScoringAgent(BaseAgent):
                 
                 # 确保分数在合理范围内
                 result["score"] = max(1, min(10, result["score"]))
+
+                # 计算字母等级（如缺失）
+                if "letter" not in result:
+                    result["letter"] = self._score_to_letter(result["score"]) 
                 
                 return result
                 
@@ -115,11 +121,13 @@ class ScoringAgent(BaseAgent):
                 
                 return {
                     "score": score,
+                    "letter": self._score_to_letter(score),
                     "breakdown": {
-                        "technical": score // 3,
-                        "communication": score // 3,
-                        "experience": score // 5,
-                        "innovation": score // 5
+                        "math_logic": max(1, min(4, score - 6)) if score >= 7 else max(1, min(4, score // 2)),
+                        "reasoning_rigor": max(0, min(2, (score - 4) // 3)),
+                        "communication": max(0, min(2, (score + 1) // 4)),
+                        "collaboration": 1 if score >= 7 else 0,
+                        "potential": 1 if score >= 8 else 0
                     },
                     "reasoning": response,
                     "strengths": [],
@@ -131,11 +139,13 @@ class ScoringAgent(BaseAgent):
             print(f"Error in ScoringAgent: {e}")
             return {
                 "score": 5,
+                "letter": self._score_to_letter(5),
                 "breakdown": {
-                    "technical": 2,
-                    "communication": 2,
-                    "experience": 1,
-                    "innovation": 0
+                    "math_logic": 2,
+                    "reasoning_rigor": 1,
+                    "communication": 1,
+                    "collaboration": 0,
+                    "potential": 1
                 },
                 "reasoning": f"评分过程中出现错误: {str(e)}",
                 "strengths": [],
@@ -172,6 +182,17 @@ class ScoringAgent(BaseAgent):
             return 3
         
         return 5  # 默认分数
+
+    def _score_to_letter(self, score: int) -> str:
+        """根据数值分映射字母等级"""
+        if score >= 9:
+            return "A"
+        elif score >= 7:
+            return "B"
+        elif score >= 5:
+            return "C"
+        else:
+            return "D"
     
     def evaluate_interview_readiness(self, qa_history: List[Dict[str, Any]], min_questions: int = 5) -> Dict[str, Any]:
         """评估是否有足够信息做出面试决定"""

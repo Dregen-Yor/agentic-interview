@@ -241,9 +241,33 @@ class MultiAgentCoordinator:
                 "qa_history": session.qa_history,
                 "detailed_summary": summary_result
             }
-            
+
             save_success = self.retrieval_system.save_interview_result(
                 session.candidate_name, result_data
+            )
+
+            # 保存完整的面试记忆和上下文对话内容
+            memory_save_success = self.memory_manager.save_memory_to_storage(
+                session_id, self.retrieval_system
+            )
+
+            if not memory_save_success:
+                print(f"警告: 面试记忆保存失败: {session_id}")
+
+            # 在记忆中记录完整的对话上下文
+            memory.set_context("final_summary", summary_result)
+            memory.set_context("security_summary", security_summary)
+            memory.set_context("interview_duration", (datetime.now() - session.start_time).total_seconds())
+            memory.set_context("session_metadata", {
+                "total_questions": len(session.qa_history),
+                "final_decision": summary_result.get("final_decision"),
+                "average_score": memory.get_average_score(),
+                "security_alerts_count": len(security_summary.get("security_alerts", []))
+            })
+
+            # 再次保存更新后的记忆
+            final_memory_save_success = self.memory_manager.save_memory_to_storage(
+                session_id, self.retrieval_system
             )
             
             # 清理会话
@@ -253,12 +277,14 @@ class MultiAgentCoordinator:
                 "success": True,
                 "interview_complete": True,
                 "final_decision": summary_result.get("final_decision", "conditional"),
+                "final_grade": summary_result.get("final_grade", "C"),
                 "overall_score": summary_result.get("overall_score", memory.get_average_score()),
                 "summary": summary_result.get("summary", ""),
                 "total_questions": len(session.qa_history),
                 "average_score": memory.get_average_score(),
                 "save_success": save_success,
-                "message": "面试已完成，感谢您的参与！"
+                "memory_save_success": final_memory_save_success,
+                "message": "面试已完成，感谢您的参与！记忆和对话内容已完整保存。"
             }
             
         except Exception as e:
@@ -299,6 +325,148 @@ class MultiAgentCoordinator:
         session_ids = list(self.active_sessions.keys())
         for session_id in session_ids:
             self.cleanup_session(session_id)
+
+    def resume_interview(self, session_id: str) -> Dict[str, Any]:
+        """恢复历史面试会话"""
+        try:
+            # 尝试从存储中加载记忆
+            memory = self.memory_manager.load_memory_from_storage(session_id, self.retrieval_system)
+
+            if not memory:
+                return {
+                    "success": False,
+                    "error": "Memory not found",
+                    "message": "未找到该面试会话的记忆数据"
+                }
+
+            # 从记忆中恢复会话信息
+            candidate_name = memory.candidate_name
+            resume_data = memory.get_context("resume_data", {})
+
+            if not resume_data:
+                return {
+                    "success": False,
+                    "error": "Resume data not found",
+                    "message": "记忆数据中缺少简历信息"
+                }
+
+            # 创建恢复的面试会话
+            session = InterviewSession(
+                session_id=session_id,
+                candidate_name=candidate_name,
+                resume_data=resume_data,
+                coordinator=self
+            )
+
+            # 从记忆中恢复问答历史
+            qa_history = memory.qa_history
+            for qa in qa_history:
+                session.qa_history.append({
+                    "question": qa["question"],
+                    "answer": qa["answer"],
+                    "question_type": qa.get("question_type", "general"),
+                    "difficulty": qa.get("difficulty", "medium"),
+                    "score_details": qa.get("score_details", {}),
+                    "timestamp": qa.get("timestamp", datetime.now())
+                })
+
+            self.active_sessions[session_id] = session
+
+            # 恢复当前问题（如果有的话）
+            last_qa = qa_history[-1] if qa_history else None
+            if last_qa:
+                session.current_question = {
+                    "question": last_qa["question"],
+                    "type": last_qa.get("question_type", "general"),
+                    "difficulty": last_qa.get("difficulty", "medium")
+                }
+
+            return {
+                "success": True,
+                "session_id": session_id,
+                "candidate_name": candidate_name,
+                "total_questions": len(qa_history),
+                "average_score": memory.get_average_score(),
+                "last_question": last_qa["question"] if last_qa else None,
+                "message": f"已恢复面试会话: {candidate_name}，共{len(qa_history)}个问题"
+            }
+
+        except Exception as e:
+            print(f"恢复面试会话时发生错误: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "恢复面试会话时发生系统错误"
+            }
+
+    def get_candidate_memory_history(self, candidate_name: str) -> List[Dict[str, Any]]:
+        """获取候选人的记忆历史记录"""
+        try:
+            memories = self.retrieval_system.get_candidate_memories(candidate_name)
+            memory_summaries = []
+
+            for memory_record in memories:
+                memory_data = memory_record.get("memory_data", {})
+                metadata = memory_record.get("metadata", {})
+
+                summary = {
+                    "session_id": memory_record.get("session_id"),
+                    "candidate_name": memory_data.get("candidate_name"),
+                    "created_at": memory_data.get("created_at"),
+                    "saved_at": memory_record.get("saved_at"),
+                    "total_questions": metadata.get("total_questions", 0),
+                    "average_score": metadata.get("average_score", 0),
+                    "has_context": metadata.get("has_context", False)
+                }
+                memory_summaries.append(summary)
+
+            return memory_summaries
+
+        except Exception as e:
+            print(f"获取候选人记忆历史时发生错误: {e}")
+            return []
+
+    def export_memory_to_file(self, session_id: str, file_path: str = None) -> Dict[str, Any]:
+        """将记忆导出到文件"""
+        try:
+            memory = self.memory_manager.get_memory(session_id)
+            if not memory:
+                # 尝试从存储中加载
+                memory = self.memory_manager.load_memory_from_storage(session_id, self.retrieval_system)
+
+            if not memory:
+                return {
+                    "success": False,
+                    "error": "Memory not found",
+                    "message": "未找到该面试会话的记忆数据"
+                }
+
+            # 生成导出内容
+            export_data = {
+                "session_id": session_id,
+                "export_time": datetime.now().isoformat(),
+                "memory_data": memory.to_dict(),
+                "formatted_history": memory.get_formatted_history(include_scores=True)
+            }
+
+            if file_path:
+                import json
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(export_data, f, ensure_ascii=False, indent=2)
+
+            return {
+                "success": True,
+                "export_data": export_data,
+                "message": f"记忆已导出: {session_id}"
+            }
+
+        except Exception as e:
+            print(f"导出记忆时发生错误: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "导出记忆时发生系统错误"
+            }
     
     def __del__(self):
         """析构函数，清理资源"""

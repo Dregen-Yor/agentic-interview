@@ -89,13 +89,28 @@ class InterviewMemory:
         return formatted
     
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典格式"""
+        """转换为字典格式，确保所有数据都能序列化"""
+        def serialize_datetime(obj):
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            return obj
+
+        def serialize_data(obj):
+            if isinstance(obj, dict):
+                return {k: serialize_data(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [serialize_data(item) for item in obj]
+            elif isinstance(obj, datetime):
+                return obj.isoformat()
+            else:
+                return obj
+
         return {
             "candidate_name": self.candidate_name,
-            "qa_history": self.qa_history,
-            "score_history": self.score_history,
-            "context_memory": self.context_memory,
-            "created_at": self.created_at.isoformat() if isinstance(self.created_at, datetime) else self.created_at,
+            "qa_history": serialize_data(self.qa_history),
+            "score_history": serialize_data(self.score_history),
+            "context_memory": serialize_data(self.context_memory),
+            "created_at": serialize_datetime(self.created_at),
             "average_score": self.get_average_score()
         }
     
@@ -141,3 +156,60 @@ class MemoryManager:
     def get_all_memories(self) -> Dict[str, InterviewMemory]:
         """获取所有记忆"""
         return self.memories.copy()
+
+    def save_memory_to_storage(self, session_id: str, storage_interface) -> bool:
+        """保存记忆到持久化存储"""
+        try:
+            memory = self.get_memory(session_id)
+            if not memory:
+                return False
+
+            memory_data = {
+                "session_id": session_id,
+                "memory_data": memory.to_dict(),
+                "saved_at": datetime.now().isoformat()
+            }
+
+            success = storage_interface.save_memory(memory_data)
+            if success:
+                print(f"记忆已保存到存储: {session_id}")
+            return success
+        except Exception as e:
+            print(f"保存记忆时发生错误: {e}")
+            return False
+
+    def load_memory_from_storage(self, session_id: str, storage_interface) -> Optional[InterviewMemory]:
+        """从持久化存储加载记忆"""
+        try:
+            memory_data = storage_interface.load_memory(session_id)
+            if not memory_data or "memory_data" not in memory_data:
+                return None
+
+            memory = InterviewMemory.from_dict(memory_data["memory_data"])
+            self.memories[session_id] = memory
+            print(f"记忆已从存储加载: {session_id}")
+            return memory
+        except Exception as e:
+            print(f"加载记忆时发生错误: {e}")
+            return None
+
+    def save_all_memories_to_storage(self, storage_interface) -> Dict[str, bool]:
+        """保存所有活跃记忆到持久化存储"""
+        results = {}
+        for session_id in list(self.memories.keys()):
+            results[session_id] = self.save_memory_to_storage(session_id, storage_interface)
+        return results
+
+    def get_memory_summary(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """获取记忆摘要信息"""
+        memory = self.get_memory(session_id)
+        if not memory:
+            return None
+
+        return {
+            "candidate_name": memory.candidate_name,
+            "total_questions": len(memory.qa_history),
+            "average_score": memory.get_average_score(),
+            "created_at": memory.created_at.isoformat() if isinstance(memory.created_at, datetime) else memory.created_at,
+            "has_context": bool(memory.context_memory)
+        }

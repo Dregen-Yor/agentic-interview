@@ -32,31 +32,30 @@ class SummaryAgent(BaseAgent):
             self.result_collection = None
 
         self.system_prompt = """
-你是一个专业的面试总结专家，负责对整个面试过程进行全面分析和总结，并做出最终的录用决定。
+你是一个大学内计算机拔尖班（科研方向）面试总结专家。对象为大一新生，应以数理与逻辑基础为核心，兼顾基本素质与与人交往能力，重点识别科研潜力。
 
 你的职责：
-1. 综合分析候选人在整个面试过程中的表现
-2. 评估候选人与职位要求的匹配度
-3. 考虑各个环节的评分情况
-4. 识别候选人的优势和不足
-5. 做出客观的录用建议
+1. 综合分析候选人在面试中的数理逻辑、推理严谨性、表达沟通、合作基线与成长潜力；
+2. 对候选人自述的已学内容与追问表现给出客观评价；
+3. 结合各环节评分，给出最终字母等级（A/B/C/D）与录用建议；
+4. 强调公平与客观，避免偏见与无关的隐私评判。
 
-分析维度：
-1. 技术能力：专业技能掌握程度和深度
-2. 经验匹配：工作经验与职位要求的契合度
-3. 学习能力：接受新知识和适应变化的能力
-4. 沟通表达：思路清晰度和表达能力
-5. 问题解决：分析和解决问题的能力
-6. 团队合作：协作意识和团队精神
-7. 发展潜力：职业发展前景和成长空间
+分析维度（参考）：
+1. 数理/逻辑基础：概念理解、抽象能力、形式化与严谨性；
+2. 推理与问题解决：多步推理质量、边界与反例意识；
+3. 表达与沟通：结构化与清晰度、倾听与回应；
+4. 合作与社交基线：尊重他人、团队协作与稳定性；
+5. 成长潜力：学习动机与反思、科研兴趣与探索态度。
 
-决策标准：
-- 推荐录用：平均分≥7分，核心技能突出，无重大短板
-- 谨慎录用：平均分6-7分，基本符合要求，有成长潜力
-- 不推荐录用：平均分<6分，关键技能不足或存在严重问题
+等级与建议（面向最终评价）：
+- A：推荐录取（通常对应平均分≥8.5）
+- B：可以考虑录取（通常对应平均分7.0-8.4）
+- C：不推荐录取（通常对应平均分5.0-6.9）
+- D：基本不能录取（通常对应平均分<5.0）
 
 请以JSON格式返回总结结果：
 {
+    "final_grade": "A/B/C/D",
     "final_decision": "accept/reject/conditional",
     "overall_score": 总体评分(1-10),
     "summary": "面试总结",
@@ -64,15 +63,15 @@ class SummaryAgent(BaseAgent):
     "weaknesses": ["不足1", "不足2"],
     "recommendations": {
         "for_candidate": "给候选人的建议",
-        "for_company": "给公司的建议"
+        "for_program": "给拔尖班的建议"
     },
     "confidence_level": "high/medium/low",
     "detailed_analysis": {
-        "technical_skills": "技术能力分析",
-        "experience_match": "经验匹配分析", 
+        "math_logic": "数理与逻辑分析",
+        "reasoning_rigor": "推理严谨性分析",
         "communication": "沟通能力分析",
-        "problem_solving": "问题解决能力分析",
-        "growth_potential": "发展潜力分析"
+        "collaboration": "合作与社交分析",
+        "growth_potential": "成长潜力分析"
     }
 }
 """
@@ -214,23 +213,27 @@ class SummaryAgent(BaseAgent):
     def _validate_summary_result(self, result: Dict[str, Any], average_score: float) -> Dict[str, Any]:
         """验证和标准化总结结果"""
         # 确保必要字段存在
-        if "final_decision" not in result:
-            result["final_decision"] = self._make_decision_by_score(average_score)
-        
         if "overall_score" not in result:
             result["overall_score"] = round(average_score, 1)
+
+        # 计算字母等级
+        if "final_grade" not in result:
+            result["final_grade"] = self._score_to_grade(result["overall_score"]) 
+
+        # 根据字母等级给出默认决策
+        if "final_decision" not in result:
+            result["final_decision"] = self._decision_by_grade(result["final_grade"]) 
         
         # 验证决策与分数的一致性
         decision = result["final_decision"]
         score = result["overall_score"]
+        grade = result.get("final_grade", self._score_to_grade(score))
         
-        # 如果决策与分数不匹配，以分数为准
-        if score >= 7 and decision == "reject":
-            result["final_decision"] = "accept"
-        elif score < 4 and decision == "accept":
-            result["final_decision"] = "reject"
-        elif 4 <= score < 7 and decision not in ["conditional", "accept"]:
-            result["final_decision"] = "conditional"
+        # 若分数与决策/等级冲突，优先以等级与分数区间规则为准
+        expected_grade = self._score_to_grade(score)
+        if grade != expected_grade:
+            result["final_grade"] = expected_grade
+        result["final_decision"] = self._decision_by_grade(result["final_grade"]) 
         
         # 确保其他必要字段存在
         default_values = {
@@ -240,14 +243,14 @@ class SummaryAgent(BaseAgent):
             "confidence_level": "medium",
             "recommendations": {
                 "for_candidate": "建议继续提升相关技能",
-                "for_company": "建议根据具体情况决定"
+                "for_program": "建议结合面试目标与培养方向综合判断"
             },
             "detailed_analysis": {
-                "technical_skills": "技能分析待补充",
-                "experience_match": "经验匹配分析待补充",
+                "math_logic": "数理与逻辑分析待补充",
+                "reasoning_rigor": "推理严谨性分析待补充",
                 "communication": "沟通能力分析待补充",
-                "problem_solving": "问题解决能力分析待补充",
-                "growth_potential": "发展潜力分析待补充"
+                "collaboration": "合作与社交分析待补充",
+                "growth_potential": "成长潜力分析待补充"
             }
         }
         
@@ -258,10 +261,26 @@ class SummaryAgent(BaseAgent):
         return result
     
     def _make_decision_by_score(self, average_score: float) -> str:
-        """根据平均分做决定"""
-        if average_score >= 7:
+        """根据平均分做决定（兼容旧逻辑）"""
+        grade = self._score_to_grade(average_score)
+        return self._decision_by_grade(grade)
+
+    def _score_to_grade(self, score: float) -> str:
+        """将分数映射为A/B/C/D等级（平均分使用≥8.5阈值）"""
+        if score >= 8.5:
+            return "A"
+        elif score >= 7.0:
+            return "B"
+        elif score >= 5.0:
+            return "C"
+        else:
+            return "D"
+
+    def _decision_by_grade(self, grade: str) -> str:
+        """根据等级映射录用建议"""
+        if grade == "A":
             return "accept"
-        elif average_score >= 5:
+        elif grade == "B":
             return "conditional"
         else:
             return "reject"
@@ -273,6 +292,7 @@ class SummaryAgent(BaseAgent):
         
         return {
             "candidate_name": candidate_name,
+            "final_grade": self._score_to_grade(average_score),
             "final_decision": decision,
             "overall_score": round(average_score, 1),
             "summary": raw_response,
@@ -281,13 +301,13 @@ class SummaryAgent(BaseAgent):
             "confidence_level": "low",
             "recommendations": {
                 "for_candidate": "建议继续提升相关技能",
-                "for_company": "建议结合其他评估方式综合考虑"
+                "for_program": "建议结合其他评估方式综合考虑"
             },
             "detailed_analysis": {
-                "technical_skills": "由于系统问题，详细分析不可用",
-                "experience_match": "由于系统问题，详细分析不可用",
+                "math_logic": "由于系统问题，详细分析不可用",
+                "reasoning_rigor": "由于系统问题，详细分析不可用",
                 "communication": "由于系统问题，详细分析不可用",
-                "problem_solving": "由于系统问题，详细分析不可用",
+                "collaboration": "由于系统问题，详细分析不可用",
                 "growth_potential": "由于系统问题，详细分析不可用"
             },
             "generated_at": datetime.now().isoformat(),
@@ -298,6 +318,7 @@ class SummaryAgent(BaseAgent):
         """生成错误情况下的总结"""
         return {
             "candidate_name": candidate_name,
+            "final_grade": self._score_to_grade(average_score),
             "final_decision": "conditional",
             "overall_score": max(0, average_score),
             "summary": "由于系统错误，无法生成完整的面试总结。建议人工审核面试记录。",
@@ -306,13 +327,13 @@ class SummaryAgent(BaseAgent):
             "confidence_level": "low",
             "recommendations": {
                 "for_candidate": "建议重新安排面试",
-                "for_company": "建议人工审核面试过程"
+                "for_program": "建议人工审核面试过程"
             },
             "detailed_analysis": {
-                "technical_skills": "系统错误，无法分析",
-                "experience_match": "系统错误，无法分析",
+                "math_logic": "系统错误，无法分析",
+                "reasoning_rigor": "系统错误，无法分析",
                 "communication": "系统错误，无法分析", 
-                "problem_solving": "系统错误，无法分析",
+                "collaboration": "系统错误，无法分析",
                 "growth_potential": "系统错误，无法分析"
             },
             "generated_at": datetime.now().isoformat(),

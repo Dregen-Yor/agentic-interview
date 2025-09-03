@@ -17,26 +17,26 @@ class QuestionGeneratorAgent(BaseAgent):
         super().__init__(model, "QuestionGenerator")
         self.retrieval_system = retrieval_system
         self.base_system_prompt = """
-你是一个专业的面试官，负责根据候选人的简历和面试进展生成合适的面试问题。
+你是一个大学内计算机拔尖班（科研方向）面试官。面试对象为大一新生，整体计算机知识储备可能有限。
 
-你的职责：
-1. 根据候选人的简历背景生成针对性的问题
-2. 考虑面试的进展情况，确保问题的逻辑性和递进性
-3. 结合知识库中的相关技术问题
-4. 确保问题具有区分度，能够有效评估候选人的能力水平
+目标与侧重点：
+1. 核心重点：数理与逻辑基础（如离散数学思维、逻辑推理、抽象与形式化思考、基础概率/组合与算法直觉）
+2. 次要但必考：基本素质与与人交往能力（沟通清晰度、合作意识、尊重他人）
+3. 定向深挖：若候选人在自荐信/面试中明确提到学过某些计算机/数学/竞赛等内容，应根据该线索出题并逐步加深
 
 问题生成原则：
-- 问题应该清晰、具体、有针对性
-- 避免过于简单或过于复杂的问题
-- 结合候选人的经验水平调整问题难度
-- 确保问题能够引出候选人的深度思考和具体经验分享
+- 先以可理解的数理逻辑题或情景化逻辑推理题开场，难度由浅入深；
+- 对于明确自述的已学知识，设计追问与层层递进的探索（例如概念→原理→推导/例题→变式/开放题）；
+- 避免依赖专业术语堆砌，确保大一新生可读；如需术语，请先给出通俗解释；
+- 保持问题区分度，允许出现多步推理与简短演算；
+- 适度穿插行为/沟通类问题以评估基本素质与社交能力；
 
-请以JSON格式返回结果，包含以下字段：
+输出要求（JSON）：
 {
-    "question": "生成的问题",
-    "type": "问题类型（technical/behavioral/experience）",
+    "question": "具体问题文本（可含必要的引导/定义）",
+    "type": "问题类型（math_logic/technical/behavioral/experience）",
     "difficulty": "难度等级（easy/medium/hard）",
-    "reasoning": "选择这个问题的原因"
+    "reasoning": "为什么在当前阶段提出该题，以及区分度点"
 }
 """
     
@@ -84,20 +84,30 @@ class QuestionGeneratorAgent(BaseAgent):
             prompt_parts = []
             
             if interview_stage == "opening":
-                prompt_parts.append("这是面试的开场阶段，请生成一个开场问题，让候选人自我介绍并分享相关经验。")
+                # 开场以数理逻辑/自我介绍的轻量题目为主
+                prompt_parts.append(
+                    "这是面试的开场阶段：请先生成一个简短自我介绍引导问题，随后追加一个非常基础的数理逻辑小题（可口头推理完成），以帮助热身。问题要友好易懂。"
+                )
             elif interview_stage == "technical":
-                # 从知识库获取技术问题参考
+                # 技术阶段在本场景下以数理逻辑为主；若候选人自述技能，则定向深挖该方向
                 skills = KnowledgeExtractor.extract_skills_from_resume(resume_data)
                 position = KnowledgeExtractor.extract_position_from_resume(resume_data)
-                
+
                 if skills:
-                    rag_query = f"{position} {' '.join(skills)} 技术面试题"
+                    rag_query = f"{position} {' '.join(skills)} 相关面试题（注重原理与推理）"
                     rag_results = self.retrieval_system.rag_search(rag_query, limit=2)
                     prompt_parts.append(f"知识库参考内容：\n{rag_results}")
-                
-                prompt_parts.append("请生成一个技术相关的问题，评估候选人的专业技能。")
+                    prompt_parts.append(
+                        "请围绕候选人自述/简历中的已学内容，设计逐步加深的原理-推理-变式链式问题；同时体现数理基础与严谨性。若该内容偏工程实现，请先问核心原理或数学直觉。"
+                    )
+                else:
+                    prompt_parts.append(
+                        "候选人未明确自述技能，请生成一题数理逻辑基础题（如离散数学/组合/概率直觉/逻辑推理/不依赖编程的算法直觉），并给出一个可追问的后续变式。请将type设置为math_logic。"
+                    )
             elif interview_stage == "behavioral":
-                prompt_parts.append("请生成一个行为面试问题，评估候选人的软技能和工作态度。")
+                prompt_parts.append(
+                    "请生成一个行为面试问题，重点评估基本素质与与人交往能力，如合作、倾听、冲突解决、尊重他人与表达清晰度。问题需与校园科研/团队作业场景贴合。"
+                )
             
             # 添加历史问答信息
             if previous_qa:

@@ -22,6 +22,7 @@ class RetrievalSystem:
         self.users_collection = self.db["users"]
         self.result_collection = self.db["result"]
         self.problem_collection = self.db["problem"]
+        self.memory_collection = self.db["interview_memories"]
 
         # 初始化OpenAI客户端（使用DashScope）
         self.embedding_client = OpenAI(
@@ -168,6 +169,93 @@ class RetrievalSystem:
         except Exception as e:
             print(f"获取候选人历史记录时发生错误: {e}")
             return []
+
+    def save_memory(self, memory_data: Dict[str, Any]) -> bool:
+        """保存面试记忆到数据库"""
+        try:
+            # 为记忆数据添加元信息
+            memory_record = {
+                "session_id": memory_data["session_id"],
+                "candidate_name": memory_data["memory_data"]["candidate_name"],
+                "memory_data": memory_data["memory_data"],
+                "saved_at": memory_data["saved_at"],
+                "version": "1.0",
+                "metadata": {
+                    "total_questions": len(memory_data["memory_data"]["qa_history"]),
+                    "average_score": memory_data["memory_data"]["average_score"],
+                    "has_context": bool(memory_data["memory_data"]["context_memory"])
+                }
+            }
+
+            # 使用upsert，如果session_id已存在则更新，否则插入
+            result = self.memory_collection.replace_one(
+                {"session_id": memory_data["session_id"]},
+                memory_record,
+                upsert=True
+            )
+
+            success = result.acknowledged
+            if success:
+                print(f"面试记忆已保存: {memory_data['session_id']}")
+            return success
+
+        except Exception as e:
+            print(f"保存面试记忆时发生错误: {e}")
+            return False
+
+    def load_memory(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """从数据库加载面试记忆"""
+        try:
+            memory_record = self.memory_collection.find_one({"session_id": session_id})
+            if memory_record:
+                # 移除MongoDB特定的字段
+                memory_record.pop("_id", None)
+                return json.loads(json_util.dumps(memory_record))
+            return None
+        except Exception as e:
+            print(f"加载面试记忆时发生错误: {e}")
+            return None
+
+    def get_candidate_memories(self, candidate_name: str) -> List[Dict[str, Any]]:
+        """获取候选人的所有记忆记录"""
+        try:
+            results = list(self.memory_collection.find({"candidate_name": candidate_name}))
+            # 移除MongoDB特定的_id字段并序列化
+            for result in results:
+                result.pop("_id", None)
+            return json.loads(json_util.dumps(results))
+        except Exception as e:
+            print(f"获取候选人记忆记录时发生错误: {e}")
+            return []
+
+    def delete_memory(self, session_id: str) -> bool:
+        """删除指定的记忆记录"""
+        try:
+            result = self.memory_collection.delete_one({"session_id": session_id})
+            success = result.deleted_count > 0
+            if success:
+                print(f"记忆记录已删除: {session_id}")
+            return success
+        except Exception as e:
+            print(f"删除记忆记录时发生错误: {e}")
+            return False
+
+    def cleanup_old_memories(self, days_old: int = 30) -> int:
+        """清理指定天数之前的记忆记录"""
+        try:
+            from datetime import datetime, timedelta
+            cutoff_date = datetime.now() - timedelta(days=days_old)
+
+            result = self.memory_collection.delete_many({
+                "saved_at": {"$lt": cutoff_date.isoformat()}
+            })
+
+            deleted_count = result.deleted_count
+            print(f"已清理 {deleted_count} 条过期记忆记录")
+            return deleted_count
+        except Exception as e:
+            print(f"清理过期记忆记录时发生错误: {e}")
+            return 0
     
     def close_connection(self):
         """关闭数据库连接"""
