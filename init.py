@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import os
 import requests
 from tqdm import tqdm
+from openai import OpenAI
 
 load_dotenv()
 
@@ -15,23 +16,34 @@ COLLECTION_NAME = "problem"
 # Path to the data file
 DATA_FILE_PATH = "data/data.jsonl"
 
-# Embedding model settings
-EMBEDDING_MODEL = "Q78KG/gte-Qwen2-7B-instruct:latest"
-EMBEDDING_API_URL = "http://localhost:11434/api/embeddings"
-VECTOR_DIMENSION = 3584
+# 初始化OpenAI客户端（使用DashScope）
+embedding_client = OpenAI(
+    api_key=os.getenv("ALIYUN_API_KEY"),
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+)
+
+# 向量维度设置
+VECTOR_DIMENSION = 1024  # text-embedding-v4的向量维度
 
 
 def get_embedding(text):
     """
-    Generates an embedding for the given text using a local model API.
+    Generates an embedding for the given text using OpenAI SDK with DashScope.
     """
     try:
-        payload = {"model": EMBEDDING_MODEL, "prompt": text}
-        response = requests.post(EMBEDDING_API_URL, json=payload)
-        response.raise_for_status()
-        return response.json().get("embedding")
-    except requests.exceptions.RequestException as e:
-        print(f"Skipping line due to embedding generation error: {e}")
+        # 使用OpenAI SDK的embeddings.create方法
+        completion = embedding_client.embeddings.create(
+            model="text-embedding-v4",
+            input=text,
+            dimensions=1024,  # 指定向量维度
+            encoding_format="float"
+        )
+        # 从响应中提取embedding向量
+        if completion.data and len(completion.data) > 0:
+            return completion.data[0].embedding
+        return None
+    except Exception as e:
+        print(f"Skipping line due to OpenAI SDK embedding generation error: {e}")
         return None
 
 

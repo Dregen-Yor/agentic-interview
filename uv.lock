@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -25,6 +25,7 @@ dependencies = [
     { name = "langchain-community" },
     { name = "langchain-mongodb" },
     { name = "langchain-openai" },
+    { name = "openai" },
     { name = "pip" },
     { name = "pyjwt" },
     { name = "pymongo" },
@@ -47,6 +48,7 @@ requires-dist = [
     { name = "langchain-community", specifier = ">=0.3.24" },
     { name = "langchain-mongodb", specifier = ">=0.6.2" },
     { name = "langchain-openai", specifier = ">=0.3.21" },
+    { name = "openai", specifier = ">=1.0.0" },
     { name = "pip", specifier = ">=25.1.1" },
     { name = "pyjwt", specifier = ">=2.10.1" },
     { name = "pymongo", specifier = ">=4.13.0" },

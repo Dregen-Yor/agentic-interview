@@ -75,18 +75,18 @@ class InterviewConsumer(AsyncWebsocketConsumer):
             result = self.coordinator.start_interview(self.chat_id, candidate_name)
             
             if result["success"]:
-                # 发送首个问题
+                # 发送首个问题（统一为前端期望的字段）
                 message = {
-                    'type': 'question',
-                    'question': result["first_question"],
+                    'type': 'message',
+                    'response': result["first_question"],
                     'question_type': result.get("question_type", "opening"),
-                    'message': result["message"]
+                    'status': 'ongoing'
                 }
                 
-                # 添加TTS音频
-                audio_base64 = await self.generate_tts_audio(result["first_question"])
-                if audio_base64:
-                    message['audio'] = audio_base64
+                # 添加TTS音频（暂时禁用）
+                # audio_base64 = await self.generate_tts_audio(result["first_question"])
+                # if audio_base64:
+                #     message['audio'] = audio_base64
                 
                 await self.send(text_data=json.dumps(message))
             else:
@@ -105,22 +105,23 @@ class InterviewConsumer(AsyncWebsocketConsumer):
             
             if result["success"]:
                 if result.get("interview_complete"):
-                    # 面试结束
+                    # 面试结束（统一为前端期望的字段）
                     message = {
-                        'type': 'interview_complete',
+                        'type': 'message',
+                        'response': result["message"],
+                        'status': 'completed',
                         'final_decision': result["final_decision"],
                         'overall_score': result["overall_score"],
                         'summary': result["summary"],
                         'total_questions': result["total_questions"],
-                        'average_score': result["average_score"],
-                        'message': result["message"]
+                        'average_score': result["average_score"]
                     }
                     
-                    # 添加TTS音频
-                    completion_message = f"面试已完成。{result['message']}"
-                    audio_base64 = await self.generate_tts_audio(completion_message)
-                    if audio_base64:
-                        message['audio'] = audio_base64
+                    # 添加TTS音频（暂时禁用）
+                    # completion_message = f"面试已完成。{result['message']}"
+                    # audio_base64 = await self.generate_tts_audio(completion_message)
+                    # if audio_base64:
+                    #     message['audio'] = audio_base64
                     
                     await self.send(text_data=json.dumps(message))
                     
@@ -130,21 +131,22 @@ class InterviewConsumer(AsyncWebsocketConsumer):
                 else:
                     # 继续面试，发送下一个问题
                     message = {
-                        'type': 'question',
-                        'question': result["next_question"],
+                        'type': 'message',
+                        'response': result["next_question"],
                         'question_type': result.get("question_type", "technical"),
                         'score': result["score"],
                         'current_average': result["current_average"],
-                        'total_questions': result["total_questions"]
+                        'total_questions': result["total_questions"],
+                        'status': 'ongoing'
                     }
                     
                     if result.get("security_warning"):
                         message['security_warning'] = "请注意您的回答内容"
                     
-                    # 添加TTS音频
-                    audio_base64 = await self.generate_tts_audio(result["next_question"])
-                    if audio_base64:
-                        message['audio'] = audio_base64
+                    # 添加TTS音频（暂时禁用）
+                    # audio_base64 = await self.generate_tts_audio(result["next_question"])
+                    # if audio_base64:
+                    #     message['audio'] = audio_base64
                     
                     await self.send(text_data=json.dumps(message))
             else:

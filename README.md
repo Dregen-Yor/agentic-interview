@@ -76,7 +76,8 @@ uv run python manage.py migrate
 
 #### 启动后端服务
 ```bash
-uv run python manage.py runserver
+source .venv/bin/activate
+daphne -b 0.0.0.0 -p 8000 interview_backend.asgi:application
 ```
 
 ### 3. 前端设置

@@ -226,3 +226,5 @@ class ScoringAgent(BaseAgent):
                 "reason": f"需要更多信息，当前平均分{avg_score:.1f}，建议继续面试",
                 "recommendation": "continue"
             }
+
+            

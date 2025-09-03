@@ -4,6 +4,9 @@
 """
 
 import json
+import os
+import datetime
+import pymongo
 from typing import Dict, Any, List
 from datetime import datetime
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -15,6 +18,19 @@ class SummaryAgent(BaseAgent):
     
     def __init__(self, model):
         super().__init__(model, "SummaryAgent")
+
+        # MongoDB连接初始化
+        try:
+            self.client = pymongo.MongoClient(os.getenv("MONGODB_URI"))
+            self.db = self.client[os.getenv("MONGODB_DB")]
+            self.result_collection = self.db["result"]
+            print("SummaryAgent: MongoDB连接成功")
+        except Exception as e:
+            print(f"SummaryAgent: MongoDB连接失败: {e}")
+            self.client = None
+            self.db = None
+            self.result_collection = None
+
         self.system_prompt = """
 你是一个专业的面试总结专家，负责对整个面试过程进行全面分析和总结，并做出最终的录用决定。
 
@@ -102,20 +118,36 @@ class SummaryAgent(BaseAgent):
                 # 添加时间戳
                 result["generated_at"] = datetime.now().isoformat()
                 result["candidate_name"] = candidate_name
-                
+
+                # 自动保存面试结果到数据库
+                save_result = self.save_comprehensive_interview_result(result)
+                result["database_save_status"] = save_result
+
                 return result
                 
             except (json.JSONDecodeError, ValueError) as e:
                 print(f"Failed to parse JSON response from SummaryAgent: {e}")
                 
                 # 生成备用总结
-                return self._generate_fallback_summary(
+                fallback_result = self._generate_fallback_summary(
                     candidate_name, average_score, qa_history, response
                 )
+
+                # 保存备用总结到数据库
+                save_result = self.save_comprehensive_interview_result(fallback_result)
+                fallback_result["database_save_status"] = save_result
+
+                return fallback_result
                 
         except Exception as e:
             print(f"Error in SummaryAgent: {e}")
-            return self._generate_error_summary(candidate_name, average_score)
+            error_result = self._generate_error_summary(candidate_name, average_score)
+
+            # 保存错误总结到数据库
+            save_result = self.save_comprehensive_interview_result(error_result)
+            error_result["database_save_status"] = save_result
+
+            return error_result
     
     def _build_interview_report(self, candidate_name: str, resume_data: Dict[str, Any], 
                                qa_history: List[Dict[str, Any]], average_score: float,
@@ -286,3 +318,45 @@ class SummaryAgent(BaseAgent):
             "generated_at": datetime.now().isoformat(),
             "error": "SummaryAgent processing error"
         }
+
+    def save_comprehensive_interview_result(self, summary_result: Dict[str, Any]) -> str:
+        """
+        保存完整的面试总结结果到数据库
+
+        Args:
+            summary_result (Dict[str, Any]): 完整的面试总结结果
+
+        Returns:
+            str: 操作结果信息
+        """
+        if not self.result_collection:
+            error_msg = "数据库连接未建立，无法保存面试结果"
+            print(f"Error: {error_msg}")
+            return error_msg
+
+        try:
+            # 构建完整的面试记录
+            interview_record = {
+                "candidate_name": summary_result.get("candidate_name", ""),
+                "final_decision": summary_result.get("final_decision", ""),
+                "overall_score": summary_result.get("overall_score", 0),
+                "summary": summary_result.get("summary", ""),
+                "strengths": summary_result.get("strengths", []),
+                "weaknesses": summary_result.get("weaknesses", []),
+                "recommendations": summary_result.get("recommendations", {}),
+                "confidence_level": summary_result.get("confidence_level", ""),
+                "detailed_analysis": summary_result.get("detailed_analysis", {}),
+                "generated_at": summary_result.get("generated_at", ""),
+                "timestamp": datetime.datetime.now(),
+                "processed_by": "SummaryAgent"
+            }
+
+            result_insert = self.result_collection.insert_one(interview_record)
+            print(f"完整面试总结已保存到数据库，记录ID: {result_insert.inserted_id}")
+
+            return f"面试总结已成功记录到数据库。记录ID: {result_insert.inserted_id}"
+
+        except Exception as e:
+            error_msg = f"保存完整面试总结时发生错误: {str(e)}"
+            print(f"Error: {error_msg}")
+            return error_msg

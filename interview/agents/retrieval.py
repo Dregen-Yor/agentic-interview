@@ -4,11 +4,11 @@
 """
 
 import os
-import requests
 import pymongo
 from typing import List, Dict, Any, Optional
 from bson import json_util, ObjectId
 import json
+from openai import OpenAI
 
 
 class RetrievalSystem:
@@ -22,20 +22,29 @@ class RetrievalSystem:
         self.users_collection = self.db["users"]
         self.result_collection = self.db["result"]
         self.problem_collection = self.db["problem"]
-        
-        # Embedding model settings
-        self.embedding_api_url = "http://localhost:11434/api/embeddings"
-        self.embedding_model = "Q78KG/gte-Qwen2-7B-instruct:latest"
+
+        # 初始化OpenAI客户端（使用DashScope）
+        self.embedding_client = OpenAI(
+            api_key=os.getenv("ALIYUN_API_KEY"),
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
     
     def get_embedding(self, text: str) -> Optional[List[float]]:
-        """生成文本向量"""
+        """生成文本向量 - 使用OpenAI SDK调用DashScope"""
         try:
-            payload = {"model": self.embedding_model, "prompt": text}
-            response = requests.post(self.embedding_api_url, json=payload)
-            response.raise_for_status()
-            return response.json().get("embedding")
-        except requests.exceptions.RequestException as e:
-            print(f"Error generating embedding: {e}")
+            # 使用OpenAI SDK的embeddings.create方法
+            completion = self.embedding_client.embeddings.create(
+                model="text-embedding-v4",
+                input=text,
+                dimensions=1024,  # 指定向量维度
+                encoding_format="float"
+            )
+            # 从响应中提取embedding向量
+            if completion.data and len(completion.data) > 0:
+                return completion.data[0].embedding
+            return None
+        except Exception as e:
+            print(f"Error generating embedding with OpenAI SDK: {e}")
             return None
     
     def get_resume_by_name(self, name: str) -> Dict[str, Any]:
