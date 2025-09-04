@@ -12,9 +12,13 @@
                         <span :class="['status', getDecisionClass(interviewResult.final_decision)]">
                             {{ getDecisionText(interviewResult.final_decision) }}
                         </span>
+                        <div class="final-grade" v-if="interviewResult.final_grade">
+                            <span class="grade-label">最终等级</span>
+                            <span class="grade-value">{{ interviewResult.final_grade }}</span>
+                        </div>
                         <div class="overall-score" v-if="interviewResult.overall_score">
                             <span class="score-label">综合评分</span>
-                            <span class="score-value">{{ interviewResult.overall_score }}/10</span>
+                            <span class="score-value">{{ getScoreValue(interviewResult.overall_score) }}/10</span>
                         </div>
                     </div>
                 </div>
@@ -78,9 +82,9 @@
                         <h4>对候选人的建议</h4>
                         <p>{{ interviewResult.recommendations.for_candidate }}</p>
                     </div>
-                    <div class="recommendation-section" v-if="interviewResult.recommendations.for_company">
-                        <h4>对公司的建议</h4>
-                        <p>{{ interviewResult.recommendations.for_company }}</p>
+                    <div class="recommendation-section" v-if="interviewResult.recommendations.for_program || interviewResult.recommendations.for_company">
+                        <h4>对项目/学院的建议</h4>
+                        <p>{{ interviewResult.recommendations.for_program || interviewResult.recommendations.for_company }}</p>
                     </div>
                 </div>
             </div>
@@ -98,7 +102,7 @@
                 <div class="timestamp-info">
                     <span class="timestamp-label">生成时间:</span>
                     <span class="timestamp-value">
-                        {{ formatTimestamp(interviewResult.generated_at || interviewResult.timestamp) }}
+                        {{ formatTimestamp(interviewResult.generated_at || interviewResult.created_at || interviewResult.timestamp) }}
                     </span>
                 </div>
                 <div class="processed-by" v-if="interviewResult.processed_by">
@@ -163,21 +167,61 @@ const getConfidenceText = (confidence: string) => {
 // 分析标题映射
 const getAnalysisTitle = (key: string) => {
     const titles: { [key: string]: string } = {
-        technical_skills: '技术能力',
-        experience_match: '经验匹配度',
+        technical_skills: '技术能力', // 旧字段
+        experience_match: '经验匹配度', // 旧字段
         communication: '沟通能力',
-        problem_solving: '问题解决能力',
-        growth_potential: '发展潜力'
+        problem_solving: '问题解决能力', // 旧字段
+        growth_potential: '发展潜力',
+        // 新字段兼容
+        math_logic: '数理与逻辑',
+        reasoning_rigor: '推理严谨性',
+        collaboration: '合作与社交'
     };
     return titles[key] || key;
 };
 
+// 处理MongoDB数值格式
+const getScoreValue = (score: any) => {
+    if (typeof score === 'object' && score.$numberDouble) {
+        return parseFloat(score.$numberDouble).toFixed(1);
+    }
+    if (typeof score === 'object' && score.$numberInt) {
+        return parseInt(score.$numberInt);
+    }
+    if (typeof score === 'number') {
+        return score.toFixed(1);
+    }
+    return score || '0.0';
+};
+
 // 时间戳格式化
-const formatTimestamp = (timestamp: string) => {
+const formatTimestamp = (timestamp: any) => {
     if (!timestamp) return '未知时间';
+
     try {
-        const date = new Date(timestamp);
-        return date.toLocaleString('zh-CN', {
+        let dateValue;
+
+        // 处理MongoDB $date格式
+        if (typeof timestamp === 'object' && timestamp.$date && timestamp.$date.$numberLong) {
+            dateValue = new Date(parseInt(timestamp.$date.$numberLong));
+        }
+        // 处理字符串格式
+        else if (typeof timestamp === 'string') {
+            dateValue = new Date(timestamp);
+        }
+        // 处理数字格式
+        else if (typeof timestamp === 'number') {
+            dateValue = new Date(timestamp);
+        }
+        else {
+            return '未知时间';
+        }
+
+        if (isNaN(dateValue.getTime())) {
+            return '无效时间';
+        }
+
+        return dateValue.toLocaleString('zh-CN', {
             year: 'numeric',
             month: '2-digit',
             day: '2-digit',
@@ -186,7 +230,7 @@ const formatTimestamp = (timestamp: string) => {
             second: '2-digit'
         });
     } catch (e) {
-        return timestamp;
+        return '时间格式错误';
     }
 };
 
@@ -194,7 +238,25 @@ onMounted(async () => {
     try {
         const data = await authStore.getInterviewResult();
         if (data.result) {
-            interviewResult.value = data.result;
+            // 根据新的result.json格式，面试结果在detailed_summary中
+            if (data.result.detailed_summary) {
+                const detailedSummary = data.result.detailed_summary;
+                interviewResult.value = {
+                    ...detailedSummary,
+                    session_id: data.result.session_id,
+                    created_at: data.result.timestamp || data.result.created_at,
+                    saved_at: data.result.saved_at,
+                    // 确保candidate_name字段存在
+                    candidate_name: detailedSummary.candidate_name || data.result.candidate_name || data.result.name
+                };
+            } else {
+                // 如果没有detailed_summary，尝试使用其他字段
+                interviewResult.value = {
+                    ...data.result,
+                    // 如果没有summary字段，使用comment作为summary
+                    summary: data.result.summary || data.result.comment || '暂无面试总结'
+                };
+            }
         } else {
             error.value = '未能获取到面试结果。';
         }
@@ -327,6 +389,27 @@ h1 {
     padding: 1rem;
     border-radius: 12px;
     backdrop-filter: blur(10px);
+}
+
+.final-grade {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: rgba(255,255,255,0.2);
+    padding: 1rem;
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+}
+
+.grade-label {
+    font-size: 0.9rem;
+    opacity: 0.9;
+    margin-bottom: 0.25rem;
+}
+
+.grade-value {
+    font-size: 1.8rem;
+    font-weight: bold;
 }
 
 .score-label {

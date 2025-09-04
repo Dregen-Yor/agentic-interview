@@ -18,6 +18,7 @@ class QuestionGeneratorAgent(BaseAgent):
         self.retrieval_system = retrieval_system
         self.base_system_prompt = """
 你是一个大学内计算机拔尖班（科研方向）面试官。面试对象为大一新生，整体计算机知识储备可能有限。
+面试将控制在5-6轮高效问答，需要在有限轮次内全面评估候选人。
 
 目标与侧重点：
 1. 核心重点：数理与逻辑基础（如离散数学思维、逻辑推理、抽象与形式化思考、基础概率/组合与算法直觉）
@@ -30,14 +31,22 @@ class QuestionGeneratorAgent(BaseAgent):
 - 避免依赖专业术语堆砌，确保大一新生可读；如需术语，请先给出通俗解释；
 - 保持问题区分度，允许出现多步推理与简短演算；
 - 适度穿插行为/沟通类问题以评估基本素质与社交能力；
+- 必须在5-6轮内覆盖：数理逻辑、技术深度、行为面试；
+- 根据前序回答质量，快速调整后续问题难度和方向；
 
-输出要求（JSON）：
+输出要求（必须是严格的JSON格式）：
 {
     "question": "具体问题文本（可含必要的引导/定义）",
     "type": "问题类型（math_logic/technical/behavioral/experience）",
     "difficulty": "难度等级（easy/medium/hard）",
     "reasoning": "为什么在当前阶段提出该题，以及区分度点"
 }
+
+**重要格式要求**：
+1. 必须返回完整的JSON格式，确保所有大括号 {} 和引号 "" 配对
+2. 不要在JSON前后添加任何额外文字、markdown标记或代码块符号
+3. 确保最后一个字段后没有多余的逗号
+4. 检查JSON的完整性，特别是结尾的 '}' 大括号
 """
     
     def get_system_prompt(self) -> str:
@@ -70,6 +79,7 @@ class QuestionGeneratorAgent(BaseAgent):
         - previous_qa: 之前的问答记录
         - current_score: 当前评分情况
         """
+        print(f"===== QuestionGenerator.process() 开始执行 =====")
         try:
             resume_data = input_data.get("resume_data", {})
             interview_stage = input_data.get("interview_stage", "technical")
@@ -84,9 +94,9 @@ class QuestionGeneratorAgent(BaseAgent):
             prompt_parts = []
             
             if interview_stage == "opening":
-                # 开场以数理逻辑/自我介绍的轻量题目为主
+                # 开场以数理逻辑/自我介绍的轻量题目为主，由于总轮次有限，需要高效
                 prompt_parts.append(
-                    "这是面试的开场阶段：请先生成一个简短自我介绍引导问题，随后追加一个非常基础的数理逻辑小题（可口头推理完成），以帮助热身。问题要友好易懂。"
+                    "这是面试的开场阶段（总共只有5-6轮）：请生成一个既能了解背景又能体现数理逻辑基础的高效开场问题。问题要友好但有一定区分度，能快速了解候选人的思维能力。"
                 )
             elif interview_stage == "technical":
                 # 技术阶段在本场景下以数理逻辑为主；若候选人自述技能，则定向深挖该方向
@@ -98,7 +108,7 @@ class QuestionGeneratorAgent(BaseAgent):
                     rag_results = self.retrieval_system.rag_search(rag_query, limit=2)
                     prompt_parts.append(f"知识库参考内容：\n{rag_results}")
                     prompt_parts.append(
-                        "请围绕候选人自述/简历中的已学内容，设计逐步加深的原理-推理-变式链式问题；同时体现数理基础与严谨性。若该内容偏工程实现，请先问核心原理或数学直觉。"
+                        "请围绕候选人自述/简历中的已学内容，设计一个高效的核心问题直达本质理解；同时体现数理基础与严谨性。由于总轮次有限，避免过多铺垫，直接考察核心能力。"
                     )
                 else:
                     prompt_parts.append(
@@ -106,7 +116,7 @@ class QuestionGeneratorAgent(BaseAgent):
                     )
             elif interview_stage == "behavioral":
                 prompt_parts.append(
-                    "请生成一个行为面试问题，重点评估基本素质与与人交往能力，如合作、倾听、冲突解决、尊重他人与表达清晰度。问题需与校园科研/团队作业场景贴合。"
+                    "请生成一个高效的行为面试问题，重点评估基本素质与与人交往能力，如合作、倾听、冲突解决、尊重他人与表达清晰度。问题需与校园科研/团队作业场景贴合，且能在一个回答中体现多个维度。"
                 )
             
             # 添加历史问答信息
@@ -115,7 +125,7 @@ class QuestionGeneratorAgent(BaseAgent):
                                        for qa in previous_qa[-3:]])  # 只取最近3轮
                 prompt_parts.append(f"之前的问答记录：\n{qa_history}")
                 prompt_parts.append(f"当前平均分: {current_score}/10")
-                prompt_parts.append("请根据候选人的回答情况，生成下一个合适的问题。")
+                prompt_parts.append(f"当前是第{len(previous_qa)+1}轮（总共5-6轮），请根据候选人的回答情况和剩余轮次，生成一个高效且有针对性的问题。")
             
             human_message_content = "\n\n".join(prompt_parts)
             
@@ -126,17 +136,27 @@ class QuestionGeneratorAgent(BaseAgent):
             
             response = self._invoke_model(messages)
             
+            # 输出原始响应内容
+            print(f"===== QuestionGenerator 原始响应 =====")
+            print(response)
+            print("=====================================\n")
+            
             # 尝试解析JSON响应
             try:
-                result = json.loads(response)
+                # 首先尝试修复常见的JSON问题
+                fixed_response = self._fix_common_json_issues(response)
+                result = json.loads(fixed_response)
                 if "question" not in result:
                     raise ValueError("Response missing 'question' field")
                 return result
             except (json.JSONDecodeError, ValueError) as e:
                 print(f"Failed to parse JSON response: {e}")
-                # 如果JSON解析失败，返回一个默认格式
+                print(f"Raw response: {response}")
+
+                # 如果JSON解析失败，直接返回原始字符串
+                question_text = self._extract_question_from_raw_response(response)
                 return {
-                    "question": response,
+                    "question": question_text,
                     "type": "general",
                     "difficulty": "medium",
                     "reasoning": "Generated question based on context"
@@ -172,3 +192,42 @@ class QuestionGeneratorAgent(BaseAgent):
             questions.append(technical_result)
         
         return questions
+
+    def _fix_common_json_issues(self, response: str) -> str:
+        """
+        修复常见的JSON格式问题
+        """
+        # 清理响应
+        cleaned = response.strip()
+        
+        # 移除markdown代码块标记
+        if cleaned.startswith('```json'):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith('```'):
+            cleaned = cleaned[3:]
+        if cleaned.endswith('```'):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+        
+        # 检查是否缺少结尾大括号
+        open_braces = cleaned.count('{')
+        close_braces = cleaned.count('}')
+        
+        if open_braces > close_braces:
+            # 添加缺少的结尾大括号
+            missing_braces = open_braces - close_braces
+            cleaned += '}' * missing_braces
+        
+        # 移除可能的多余逗号（在大括号前的逗号）
+        import re
+        cleaned = re.sub(r',\s*}', '}', cleaned)
+        cleaned = re.sub(r',\s*]', ']', cleaned)
+        
+        return cleaned
+    
+    def _extract_question_from_raw_response(self, raw_response: str) -> str:
+        """
+        从原始AI响应中提取问题文本
+        JSON解析失败时直接返回整个字符串
+        """
+        return raw_response.strip()

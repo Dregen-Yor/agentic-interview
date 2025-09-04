@@ -91,7 +91,8 @@ export const useAuth = defineStore('auth', {
             }
             try {
                 const response = await apiClient.get('http://101.76.218.89:8000/api/result/');
-                return response.data;
+                // Return the data directly since backend now returns the result object directly
+                return { result: response.data };
             } catch (error: any) {
                 const message = error.response?.data?.error || error.message || 'Failed to fetch interview result';
                 throw new Error(message);

@@ -18,17 +18,23 @@ class InterviewMemory:
         self.context_memory = {}  # 上下文记忆
         self.created_at = datetime.now()
         
-    def add_question_answer(self, question: str, answer: str, timestamp: datetime = None):
-        """添加问答对"""
+    def add_question_answer(self, question: str, answer: str, timestamp: datetime = None, question_data: Dict[str, Any] = None):
+        """添加问答对，现在支持存储完整的问题JSON对象"""
         if timestamp is None:
             timestamp = datetime.now()
         
-        self.qa_history.append({
+        qa_entry = {
             "question": question,
             "answer": answer,
             "timestamp": timestamp,
             "question_id": len(self.qa_history)
-        })
+        }
+        
+        # 如果提供了完整的问题数据，也存储它
+        if question_data:
+            qa_entry["question_data"] = question_data
+        
+        self.qa_history.append(qa_entry)
     
     def add_score(self, question_id: int, score: int, reasoning: str = ""):
         """添加评分"""
@@ -71,6 +77,16 @@ class InterviewMemory:
         
         for i, qa in enumerate(self.qa_history):
             formatted += f"问题 {i+1}: {qa['question']}\n"
+            
+            # 如果有完整的问题数据，显示更多元信息
+            if 'question_data' in qa and qa['question_data']:
+                question_data = qa['question_data']
+                formatted += f"问题类型: {question_data.get('type', 'N/A')}\n"
+                formatted += f"难度: {question_data.get('difficulty', 'N/A')}\n"
+                # 如果有其他字段，也可以显示
+                if 'reasoning' in question_data:
+                    formatted += f"问题生成理由: {question_data['reasoning']}\n"
+            
             formatted += f"回答: {qa['answer']}\n"
             
             if include_scores:

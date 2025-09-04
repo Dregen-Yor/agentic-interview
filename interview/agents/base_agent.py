@@ -30,7 +30,9 @@ class BaseAgent(ABC):
     def _invoke_model(self, messages: List[BaseMessage]) -> str:
         """调用LLM模型"""
         try:
+            print(f"===== {self.name} 开始调用LLM =====")
             response = self.model.invoke(messages)
+            print(f"===== {self.name} LLM调用完成 =====")
             return response.content
         except Exception as e:
             print(f"Error invoking model in {self.name}: {e}")

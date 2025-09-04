@@ -33,12 +33,14 @@ class SummaryAgent(BaseAgent):
 
         self.system_prompt = """
 你是一个大学内计算机拔尖班（科研方向）面试总结专家。对象为大一新生，应以数理与逻辑基础为核心，兼顾基本素质与与人交往能力，重点识别科研潜力。
+面试采用5-6轮高效问答模式，需要在有限信息基础上做出准确评估。
 
 你的职责：
 1. 综合分析候选人在面试中的数理逻辑、推理严谨性、表达沟通、合作基线与成长潜力；
 2. 对候选人自述的已学内容与追问表现给出客观评价；
 3. 结合各环节评分，给出最终字母等级（A/B/C/D）与录用建议；
-4. 强调公平与客观，避免偏见与无关的隐私评判。
+4. 强调公平与客观，避免偏见与无关的隐私评判；
+5. 充分利用有限轮次的高质量问答，深入挖掘候选人的潜力表现。
 
 分析维度（参考）：
 1. 数理/逻辑基础：概念理解、抽象能力、形式化与严谨性；
@@ -53,7 +55,7 @@ class SummaryAgent(BaseAgent):
 - C：不推荐录取（通常对应平均分5.0-6.9）
 - D：基本不能录取（通常对应平均分<5.0）
 
-请以JSON格式返回总结结果：
+请以严格的JSON格式返回总结结果：
 {
     "final_grade": "A/B/C/D",
     "final_decision": "accept/reject/conditional",
@@ -74,6 +76,13 @@ class SummaryAgent(BaseAgent):
         "growth_potential": "成长潜力分析"
     }
 }
+
+**关键格式要求**：
+1. 必须返回完整的JSON，所有大括号 {} 必须正确配对
+2. 不要添加markdown代码块、额外说明或其他非JSON内容
+3. 仔细检查嵌套对象的大括号是否完整
+4. 确保最后以 '}' 结尾，不要遗漏任何闭合符号
+5. 所有字符串值都要用双引号包围
 """
     
     def get_system_prompt(self) -> str:
@@ -108,8 +117,15 @@ class SummaryAgent(BaseAgent):
             
             response = self._invoke_model(messages)
             
+            # 输出原始响应内容
+            print(f"===== SummaryAgent 原始响应 =====")
+            print(response)
+            print("=================================\n")
+            
             try:
-                result = json.loads(response)
+                # 首先尝试修复常见的JSON问题
+                fixed_response = self._fix_common_json_issues(response)
+                result = json.loads(fixed_response)
                 
                 # 验证和标准化结果
                 result = self._validate_summary_result(result, average_score)
@@ -118,10 +134,8 @@ class SummaryAgent(BaseAgent):
                 result["generated_at"] = datetime.now().isoformat()
                 result["candidate_name"] = candidate_name
 
-                # 自动保存面试结果到数据库
-                save_result = self.save_comprehensive_interview_result(result)
-                result["database_save_status"] = save_result
-
+                # 注意：不在这里自动保存，由协调器统一保存数据
+                # 这避免了重复保存和数据不一致问题
                 return result
                 
             except (json.JSONDecodeError, ValueError) as e:
@@ -132,20 +146,14 @@ class SummaryAgent(BaseAgent):
                     candidate_name, average_score, qa_history, response
                 )
 
-                # 保存备用总结到数据库
-                save_result = self.save_comprehensive_interview_result(fallback_result)
-                fallback_result["database_save_status"] = save_result
-
+                # 注意：不在这里保存，由协调器统一保存
                 return fallback_result
                 
         except Exception as e:
             print(f"Error in SummaryAgent: {e}")
             error_result = self._generate_error_summary(candidate_name, average_score)
 
-            # 保存错误总结到数据库
-            save_result = self.save_comprehensive_interview_result(error_result)
-            error_result["database_save_status"] = save_result
-
+            # 注意：不在这里保存，由协调器统一保存
             return error_result
     
     def _build_interview_report(self, candidate_name: str, resume_data: Dict[str, Any], 
@@ -170,6 +178,15 @@ class SummaryAgent(BaseAgent):
         for i, qa in enumerate(qa_history, 1):
             report_parts.append(f"\n--- 第{i}题 ---")
             report_parts.append(f"问题: {qa.get('question', '未记录')}")
+            
+            # 如果有完整的问题数据，显示更多元信息
+            if 'question_data' in qa and qa['question_data']:
+                question_data = qa['question_data']
+                report_parts.append(f"问题类型: {question_data.get('type', 'N/A')}")
+                report_parts.append(f"难度等级: {question_data.get('difficulty', 'N/A')}")
+                if 'reasoning' in question_data:
+                    report_parts.append(f"选题原因: {question_data['reasoning']}")
+            
             report_parts.append(f"回答: {qa.get('answer', '未记录')}")
             
             if 'score_details' in qa:
@@ -285,17 +302,20 @@ class SummaryAgent(BaseAgent):
         else:
             return "reject"
     
-    def _generate_fallback_summary(self, candidate_name: str, average_score: float, 
+    def _generate_fallback_summary(self, candidate_name: str, average_score: float,
                                   qa_history: List[Dict[str, Any]], raw_response: str) -> Dict[str, Any]:
         """生成备用总结（当JSON解析失败时）"""
         decision = self._make_decision_by_score(average_score)
-        
+
+        # 从原始响应中提取有意义的总结文本
+        summary_text = self._extract_summary_from_raw_response(raw_response)
+
         return {
             "candidate_name": candidate_name,
             "final_grade": self._score_to_grade(average_score),
             "final_decision": decision,
             "overall_score": round(average_score, 1),
-            "summary": raw_response,
+            "summary": summary_text,
             "strengths": [],
             "weaknesses": [],
             "confidence_level": "low",
@@ -350,7 +370,7 @@ class SummaryAgent(BaseAgent):
         Returns:
             str: 操作结果信息
         """
-        if not self.result_collection:
+        if self.result_collection is None:
             error_msg = "数据库连接未建立，无法保存面试结果"
             print(f"Error: {error_msg}")
             return error_msg
@@ -369,7 +389,8 @@ class SummaryAgent(BaseAgent):
                 "detailed_analysis": summary_result.get("detailed_analysis", {}),
                 "generated_at": summary_result.get("generated_at", ""),
                 "timestamp": datetime.datetime.now(),
-                "processed_by": "SummaryAgent"
+                "processed_by": "SummaryAgent",
+                "database_save_status": summary_result.get("database_save_status", "")
             }
 
             result_insert = self.result_collection.insert_one(interview_record)
@@ -381,3 +402,42 @@ class SummaryAgent(BaseAgent):
             error_msg = f"保存完整面试总结时发生错误: {str(e)}"
             print(f"Error: {error_msg}")
             return error_msg
+
+    def _fix_common_json_issues(self, response: str) -> str:
+        """
+        修复常见的JSON格式问题
+        """
+        # 清理响应
+        cleaned = response.strip()
+        
+        # 移除markdown代码块标记
+        if cleaned.startswith('```json'):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith('```'):
+            cleaned = cleaned[3:]
+        if cleaned.endswith('```'):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+        
+        # 检查是否缺少结尾大括号
+        open_braces = cleaned.count('{')
+        close_braces = cleaned.count('}')
+        
+        if open_braces > close_braces:
+            # 添加缺少的结尾大括号
+            missing_braces = open_braces - close_braces
+            cleaned += '}' * missing_braces
+        
+        # 移除可能的多余逗号（在大括号前的逗号）
+        import re
+        cleaned = re.sub(r',\s*}', '}', cleaned)
+        cleaned = re.sub(r',\s*]', ']', cleaned)
+        
+        return cleaned
+    
+    def _extract_summary_from_raw_response(self, raw_response: str) -> str:
+        """
+        从原始AI响应中提取总结文本
+        JSON解析失败时直接返回整个字符串
+        """
+        return raw_response.strip()

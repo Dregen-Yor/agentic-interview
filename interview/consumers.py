@@ -62,7 +62,12 @@ class InterviewConsumer(AsyncWebsocketConsumer):
                 await self.send_error("无效的输入格式")
                 
         except json.JSONDecodeError:
-            await self.send_error("无效的JSON格式")
+            # JSON解析失败时，返回原始字符串
+            await self.send(text_data=json.dumps({
+                'type': 'raw_message',
+                'content': text_data,
+                'error': 'JSON解析失败，返回原始字符串'
+            }))
         except Exception as e:
             print(f"接收消息时发生错误: {e}")
             await self.send_error("处理消息时发生错误")
@@ -75,10 +80,10 @@ class InterviewConsumer(AsyncWebsocketConsumer):
             result = self.coordinator.start_interview(self.chat_id, candidate_name)
             
             if result["success"]:
-                # 发送首个问题（统一为前端期望的字段）
+                # 发送首个问题（协调器已经处理了文本提取）
                 message = {
                     'type': 'message',
-                    'response': result["first_question"],
+                    'response': str(result["first_question"]),
                     'question_type': result.get("question_type", "opening"),
                     'status': 'ongoing'
                 }
@@ -105,34 +110,74 @@ class InterviewConsumer(AsyncWebsocketConsumer):
             
             if result["success"]:
                 if result.get("interview_complete"):
-                    # 面试结束（统一为前端期望的字段）
-                    message = {
-                        'type': 'message',
-                        'response': result["message"],
-                        'status': 'completed',
-                        'final_decision': result["final_decision"],
-                        'overall_score': result["overall_score"],
-                        'summary': result["summary"],
-                        'total_questions': result["total_questions"],
-                        'average_score': result["average_score"]
-                    }
-                    
-                    # 添加TTS音频（暂时禁用）
-                    # completion_message = f"面试已完成。{result['message']}"
-                    # audio_base64 = await self.generate_tts_audio(completion_message)
-                    # if audio_base64:
-                    #     message['audio'] = audio_base64
-                    
-                    await self.send(text_data=json.dumps(message))
-                    
-                    # 延迟关闭连接
-                    await asyncio.sleep(2)
-                    await self.close()
+                    # 检查是否是安全终止
+                    if result.get("security_termination"):
+                        # 安全违规终止面试
+                        completion_message = result["message"]
+                        summary_text = result.get("summary", "")
+
+                        # 如果总结是字典格式，尝试提取纯文本
+                        if isinstance(summary_text, dict):
+                            summary_text = summary_text.get("summary", str(summary_text))
+
+                        message = {
+                            'type': 'security_termination',
+                            'response': str(completion_message),
+                            'status': 'terminated_security',
+                            'final_decision': result["final_decision"],
+                            'final_grade': result.get("final_grade", "F"),
+                            'overall_score': result["overall_score"],
+                            'summary': str(summary_text),
+                            'total_questions': result["total_questions"],
+                            'average_score': result["average_score"],
+                            'termination_reason': result.get("termination_reason", "security_violation"),
+                            'violation_details': result.get("violation_details", {})
+                        }
+                        
+                        print(f"🚨 发送安全终止消息: {message}")
+                        await self.send(text_data=json.dumps(message))
+                        
+                        # 延迟关闭连接
+                        await asyncio.sleep(3)
+                        await self.close()
+                        
+                    else:
+                        # 正常完成面试（原有逻辑）
+                        completion_message = result["message"]
+                        summary_text = result.get("summary", "")
+
+                        # 如果总结是字典格式，尝试提取纯文本
+                        if isinstance(summary_text, dict):
+                            summary_text = summary_text.get("summary", str(summary_text))
+
+                        message = {
+                            'type': 'message',
+                            'response': str(completion_message),
+                            'status': 'completed',
+                            'final_decision': result["final_decision"],
+                            'final_grade': result.get("final_grade", "C"),
+                            'overall_score': result["overall_score"],
+                            'summary': str(summary_text),
+                            'total_questions': result["total_questions"],
+                            'average_score': result["average_score"]
+                        }
+                        
+                        # 添加TTS音频（暂时禁用）
+                        # completion_message = f"面试已完成。{result['message']}"
+                        # audio_base64 = await self.generate_tts_audio(completion_message)
+                        # if audio_base64:
+                        #     message['audio'] = audio_base64
+                        
+                        await self.send(text_data=json.dumps(message))
+                        
+                        # 延迟关闭连接
+                        await asyncio.sleep(2)
+                        await self.close()
                 else:
-                    # 继续面试，发送下一个问题
+                    # 继续面试，发送下一个问题（协调器已经处理了文本提取）
                     message = {
                         'type': 'message',
-                        'response': result["next_question"],
+                        'response': str(result["next_question"]),
                         'question_type': result.get("question_type", "technical"),
                         'score': result["score"],
                         'current_average': result["current_average"],

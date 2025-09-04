@@ -27,7 +27,7 @@ class SecurityAgent(BaseAgent):
 
 注意：合理的数学公式/符号与逻辑推理表达不应判为高风险；对不清晰但可能无害的内容优先给出“warning”并提示澄清。
 
-请以JSON格式返回检测结果：
+请以严格的JSON格式返回检测结果：
 {
     "is_safe": true/false,
     "risk_level": "low/medium/high",
@@ -35,6 +35,13 @@ class SecurityAgent(BaseAgent):
     "reasoning": "检测理由",
     "suggested_action": "continue/warning/block"
 }
+
+**严格格式要求**：
+1. 必须返回完整的JSON，确保所有大括号 {} 和引号配对
+2. 不要添加任何额外文字、解释或markdown标记
+3. detected_issues 数组格式要正确，即使为空也要保持 [] 格式
+4. 布尔值 is_safe 使用 true/false，不要使用引号
+5. 最后必须以 '}' 结尾
 """
     
         # 预定义的危险模式
@@ -112,8 +119,15 @@ class SecurityAgent(BaseAgent):
             
             response = self._invoke_model(messages)
             
+            # 输出原始响应内容
+            print(f"===== SecurityAgent 原始响应 =====")
+            print(response)
+            print("==================================\n")
+            
             try:
-                result = json.loads(response)
+                # 首先尝试修复常见的JSON问题
+                fixed_response = self._fix_common_json_issues(response)
+                result = json.loads(fixed_response)
                 
                 # 合并快速检测和深度分析的结果
                 if quick_check["detected_issues"]:
@@ -150,6 +164,38 @@ class SecurityAgent(BaseAgent):
                 "reasoning": f"安全检测过程中出现错误: {str(e)}",
                 "suggested_action": "warning"
             }
+    
+    def _fix_common_json_issues(self, response: str) -> str:
+        """
+        修复常见的JSON格式问题
+        """
+        # 清理响应
+        cleaned = response.strip()
+        
+        # 移除markdown代码块标记
+        if cleaned.startswith('```json'):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith('```'):
+            cleaned = cleaned[3:]
+        if cleaned.endswith('```'):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+        
+        # 检查是否缺少结尾大括号
+        open_braces = cleaned.count('{')
+        close_braces = cleaned.count('}')
+        
+        if open_braces > close_braces:
+            # 添加缺少的结尾大括号
+            missing_braces = open_braces - close_braces
+            cleaned += '}' * missing_braces
+        
+        # 移除可能的多余逗号（在大括号前的逗号）
+        import re
+        cleaned = re.sub(r',\s*}', '}', cleaned)
+        cleaned = re.sub(r',\s*]', ']', cleaned)
+        
+        return cleaned
     
     def _quick_security_check(self, user_input: str) -> Dict[str, Any]:
         """快速安全检测，使用模式匹配"""

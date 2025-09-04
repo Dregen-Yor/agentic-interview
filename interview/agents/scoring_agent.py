@@ -36,7 +36,7 @@ class ScoringAgent(BaseAgent):
 - 对不确定题可看思路、假设、拆解与验证方法；
 - 关注逻辑一致性与可检验性。
 
-请以JSON格式返回评分结果，包含：
+请以严格的JSON格式返回评分结果：
 {
     "score": 总分(1-10),
     "letter": "A/B/C/D",
@@ -52,6 +52,13 @@ class ScoringAgent(BaseAgent):
     "weaknesses": ["不足点1", "不足点2"],
     "suggestions": ["改进建议1", "改进建议2"]
 }
+
+**严格格式要求**：
+1. 必须返回完整有效的JSON，所有大括号和引号必须配对
+2. 不要在JSON外添加任何说明文字或markdown标记
+3. 特别注意嵌套的 breakdown 对象要正确闭合
+4. 数组字段（strengths, weaknesses, suggestions）格式要正确
+5. 最后必须以 '}' 结尾，检查是否遗漏闭合符号
 """
     
     def get_system_prompt(self) -> str:
@@ -67,6 +74,7 @@ class ScoringAgent(BaseAgent):
         - difficulty: 问题难度
         - resume_data: 简历信息（用于经验匹配评估）
         """
+        print(f"===== ScoringAgent.process() 开始执行 =====")
         try:
             question = input_data.get("question", "")
             answer = input_data.get("answer", "")
@@ -95,9 +103,16 @@ class ScoringAgent(BaseAgent):
             
             response = self._invoke_model(messages)
             
+            # 输出原始响应内容
+            print(f"===== ScoringAgent 原始响应 =====")
+            print(response)
+            print("=================================\n")
+            
             # 尝试解析JSON响应
             try:
-                result = json.loads(response)
+                # 首先尝试修复常见的JSON问题
+                fixed_response = self._fix_common_json_issues(response)
+                result = json.loads(fixed_response)
                 
                 # 验证必要字段
                 if "score" not in result:
@@ -153,35 +168,42 @@ class ScoringAgent(BaseAgent):
                 "suggestions": []
             }
     
-    def _extract_score_from_text(self, text: str) -> int:
-        """从文本中提取分数"""
+    def _fix_common_json_issues(self, response: str) -> str:
+        """
+        修复常见的JSON格式问题
+        """
+        # 清理响应
+        cleaned = response.strip()
+        
+        # 移除markdown代码块标记
+        if cleaned.startswith('```json'):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith('```'):
+            cleaned = cleaned[3:]
+        if cleaned.endswith('```'):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+        
+        # 检查是否缺少结尾大括号
+        open_braces = cleaned.count('{')
+        close_braces = cleaned.count('}')
+        
+        if open_braces > close_braces:
+            # 添加缺少的结尾大括号
+            missing_braces = open_braces - close_braces
+            cleaned += '}' * missing_braces
+        
+        # 移除可能的多余逗号（在大括号前的逗号）
         import re
+        cleaned = re.sub(r',\s*}', '}', cleaned)
+        cleaned = re.sub(r',\s*]', ']', cleaned)
         
-        # 寻找数字模式
-        patterns = [
-            r'(\d+)分',
-            r'分数[：:](\d+)',
-            r'得分[：:](\d+)',
-            r'总分[：:](\d+)'
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                score = int(match.group(1))
-                return max(1, min(10, score))
-        
-        # 如果找不到明确的分数，根据关键词判断
-        if any(word in text for word in ['优秀', '很好', '出色']):
-            return 8
-        elif any(word in text for word in ['良好', '不错', '可以']):
-            return 6
-        elif any(word in text for word in ['一般', '普通']):
-            return 5
-        elif any(word in text for word in ['较差', '不够']):
-            return 3
-        
-        return 5  # 默认分数
+        return cleaned
+    
+    def _extract_score_from_text(self, text: str) -> int:
+        """从文本中提取分数，JSON解析失败时返回默认分数"""
+        # 简化处理，直接返回默认分数
+        return 5
 
     def _score_to_letter(self, score: int) -> str:
         """根据数值分映射字母等级"""
@@ -194,8 +216,8 @@ class ScoringAgent(BaseAgent):
         else:
             return "D"
     
-    def evaluate_interview_readiness(self, qa_history: List[Dict[str, Any]], min_questions: int = 5) -> Dict[str, Any]:
-        """评估是否有足够信息做出面试决定"""
+    def evaluate_interview_readiness(self, qa_history: List[Dict[str, Any]], min_questions: int = 4) -> Dict[str, Any]:
+        """评估是否有足够信息做出面试决定（优化为5-6轮面试）"""
         total_questions = len(qa_history)
         
         if total_questions < min_questions:
@@ -233,8 +255,8 @@ class ScoringAgent(BaseAgent):
                 "reason": f"候选人表现不佳，平均分{avg_score:.1f}",
                 "recommendation": "reject"
             }
-        elif total_questions >= min_questions + 2:
-            # 如果已经问了足够多的问题，基于当前分数做决定
+        elif total_questions >= 5:
+            # 如果已经问了5题或更多，基于当前分数做决定
             decision = "accept" if avg_score >= 6 else "reject"
             return {
                 "ready": True,

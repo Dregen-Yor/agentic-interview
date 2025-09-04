@@ -139,18 +139,40 @@ class RetrievalSystem:
         return questions[:5]  # 返回最多5个题目
     
     def save_interview_result(self, candidate_name: str, result_data: Dict[str, Any]) -> bool:
-        """保存面试结果到数据库"""
+        """保存面试结果到数据库（统一格式）"""
         try:
+            # 统一的面试记录格式
             interview_record = {
-                "name": candidate_name,
+                # 基本信息
+                "candidate_name": candidate_name,
+                "session_id": result_data.get("session_id", ""),
+                "timestamp": result_data.get("timestamp"),
+                
+                # 面试结果（兼容旧字段）
+                "name": candidate_name,  # 保持旧字段兼容性
+                "result": self._format_decision(result_data.get("final_decision", "conditional")),
                 "comment": result_data.get("summary", ""),
-                "result": "通过" if result_data.get("final_decision", False) else "不通过",
+                "final_decision": result_data.get("final_decision", "conditional"),
+                "final_grade": result_data.get("final_grade", "C"),
+                "overall_score": result_data.get("overall_score", 0),
+                
+                # 详细数据
                 "detailed_scores": result_data.get("scores", []),
                 "average_score": result_data.get("average_score", 0),
-                "questions_count": result_data.get("total_questions", 0),
-                "timestamp": result_data.get("timestamp"),
+                "total_questions": result_data.get("total_questions", 0),
+                "questions_count": result_data.get("total_questions", 0),  # 保持兼容性
+                "qa_history": result_data.get("qa_history", []),
+                "detailed_summary": result_data.get("detailed_summary", {}),
+                
+                # 安全相关
                 "security_alerts": result_data.get("security_alerts", []),
-                "qa_history": result_data.get("qa_history", [])
+                "security_summary": result_data.get("security_summary", {}),
+                
+                # 元数据
+                "session_duration": result_data.get("session_duration", 0),
+                "termination_reason": result_data.get("termination_reason", "normal_completion"),
+                "saved_at": result_data.get("timestamp"),
+                "processed_by": "MultiAgentCoordinator"
             }
             
             result = self.result_collection.insert_one(interview_record)
@@ -160,6 +182,15 @@ class RetrievalSystem:
         except Exception as e:
             print(f"保存面试结果时发生错误: {e}")
             return False
+    
+    def _format_decision(self, decision: str) -> str:
+        """格式化决策结果为中文（兼容旧系统）"""
+        decision_mapping = {
+            "accept": "通过",
+            "reject": "不通过", 
+            "conditional": "待定"
+        }
+        return decision_mapping.get(decision, "待定")
     
     def get_candidate_history(self, candidate_name: str) -> List[Dict[str, Any]]:
         """获取候选人的历史面试记录"""

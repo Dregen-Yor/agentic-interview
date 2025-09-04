@@ -233,10 +233,11 @@ def get_interview_result(request):
         # Get interview result from database
         db, client = get_db()
         result_collection = db['result']
-        
+
         # Find the latest result for the user by sorting by timestamp descending
+        # Try both field names for compatibility
         latest_result = result_collection.find_one(
-            {'name': username},
+            {'$or': [{'candidate_name': username}, {'name': username}]},
             sort=[('timestamp', pymongo.DESCENDING)]
         )
         client.close()
@@ -248,8 +249,9 @@ def get_interview_result(request):
         latest_result['_id'] = str(latest_result['_id'])
         # Convert datetime to string
         latest_result['timestamp'] = latest_result['timestamp'].isoformat()
-        
-        return JsonResponse({'result': latest_result}, status=200)
+
+        # Return the result directly, not wrapped in another 'result' key
+        return JsonResponse(latest_result, status=200)
 
     except jwt.ExpiredSignatureError:
         return JsonResponse({'error': 'Token has expired'}, status=401)

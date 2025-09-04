@@ -13,7 +13,10 @@ This is an AI-powered interview platform with a full-stack architecture:
 
 ### Backend (Django)
 ```bash
-# Development server
+# Development server with ASGI support
+daphne -b 0.0.0.0 -p 8000 interview_backend.asgi:application
+
+# Alternative: Basic development server (HTTP only, no WebSocket)
 python manage.py runserver
 
 # Database migrations
@@ -34,26 +37,32 @@ cd frontend
 # Install dependencies
 npm install
 
-# Development server
+# Development server (with hot reload)
 npm run dev
 
-# Build for production
+# Build for production (includes type checking)
 npm run build
 
-# Type checking
+# Build only (without type checking)
+npm run build-only
+
+# Type checking only
 npm run type-check
 
-# Unit tests
+# Unit tests (Vitest)
 npm run test:unit
+
+# Preview production build
+npm run preview
 ```
 
 ### Python Dependencies
 ```bash
-# Install using uv (preferred)
+# Install using uv (preferred, uses Tsinghua mirror)
 uv sync
 
-# Or using pip
-pip install -r requirements.txt  # if exists, otherwise use pyproject.toml
+# Or install from pyproject.toml
+pip install -e .
 ```
 
 ## Architecture Overview
@@ -120,56 +129,80 @@ The system now uses a sophisticated multi-agent architecture with specialized ag
 ## Environment Dependencies
 
 ### Required Services
-- **Redis**: For Django Channels WebSocket layer (port 6379)
-- **MongoDB**: For resume storage and vector search
-- **Ollama**: Local embedding model server (port 11434)
-- **TTS Service**: External text-to-speech API
+- **Redis**: For Django Channels WebSocket layer (port 6379) - `redis-server`
+- **MongoDB**: For resume storage and vector search - `mongod`
+- **Ollama**: Local embedding model server (port 11434) - `ollama run Q78KG/gte-Qwen2-7B-instruct:latest`
+- **TTS Service**: External text-to-speech API (`http://101.76.216.150:9880/`)
 
 ### Environment Variables
 Create `.env` file in project root:
-```
+```bash
+# AI API Keys
 DEEPSEEK_API_KEY=your_deepseek_key
-GEMINI_API_KEY=your_gemini_key  # New: for security agent
-MONGODB_URI=your_mongodb_connection_string
-MONGODB_DB=your_database_name
+GEMINI_API_KEY=your_gemini_key
+
+# MongoDB Configuration
 MONGO_URI=your_mongodb_uri
 MONGO_DATABASE_NAME=your_db_name
 ```
 
+### Service Startup Sequence
+For full functionality, start services in this order:
+```bash
+# 1. Start Redis
+redis-server
+
+# 2. Start MongoDB  
+mongod
+
+# 3. Start Ollama embedding model
+ollama run Q78KG/gte-Qwen2-7B-instruct:latest
+
+# 4. Start Django backend
+daphne -b 0.0.0.0 -p 8000 interview_backend.asgi:application
+
+# 5. Start Vue frontend (separate terminal)
+cd frontend && npm run dev
+```
+
 ## Development Notes
 
-### Running the Application
-1. Start Redis server
-2. Start MongoDB
-3. Start Ollama with embedding model: `ollama run Q78KG/gte-Qwen2-7B-instruct:latest`
-4. Run Django server: `python manage.py runserver`
-5. Run Vue dev server: `cd frontend && npm run dev`
+### Multi-Agent System Architecture
+Key components for understanding the interview workflow:
 
-### Multi-Agent System Features
-- **Intelligent Question Generation**: Context-aware questions based on resume and performance
-- **Comprehensive Scoring**: Multi-dimensional evaluation with detailed feedback
-- **Security Monitoring**: Real-time detection of manipulation attempts
-- **Adaptive Workflow**: Dynamic interview length based on performance assessment
-- **Detailed Analytics**: Complete interview transcripts and analysis
+- **BaseAgent** (`interview/agents/base_agent.py`): Abstract base class defining common interface
+- **Coordinator** (`interview/agents/coordinator.py`): Orchestrates agent interactions and state
+- **Memory System** (`interview/agents/memory.py`): Manages interview context and history
+- **Retrieval System** (`interview/agents/retrieval.py`): RAG integration for knowledge queries
 
-### Database Setup
-- Django uses SQLite for session/auth data
-- MongoDB stores resumes, users, interview results, and knowledge base with vector embeddings
-- Vector search requires MongoDB Atlas or properly configured MongoDB with vector search capability
+### WebSocket Communication Protocol
+- **Endpoint**: `ws://localhost:8000/ws/interview/{chat_id}/`
+- **Message Types**: `question`, `security_warning`, `interview_complete`  
+- **Session Management**: Automatic cleanup and state management
 
-### WebSocket Communication
-- Interview WebSocket: `ws://localhost:8000/ws/interview/{chat_id}/`
-- Enhanced message types: `question`, `security_warning`, `interview_complete`
-- Automatic session management and cleanup
+### Database Architecture
+- **Django Models**: SQLite database for session/auth data (standard Django ORM)
+- **MongoDB Collections**: Resume storage, user data, interview results, knowledge base with vector embeddings
+- **Vector Search**: Requires MongoDB Atlas or local MongoDB with vector search capability
 
-### Authentication Flow
-- JWT tokens stored in localStorage
-- Route guards check authentication status
-- Token validation on protected routes
-- Login redirects preserve intended destination
+### Agent Development Pattern
+To create custom agents, inherit from BaseAgent:
 
-### Backward Compatibility
-The system maintains backward compatibility with existing frontend code:
-- Old API endpoints continue to work with fallback mechanisms
-- WebSocket protocol enhanced but compatible
-- Session management preserved for HTTP-based interactions
+```python
+from interview.agents.base_agent import BaseAgent
+from typing import Dict, Any
+
+class CustomAgent(BaseAgent):
+    def get_system_prompt(self) -> str:
+        return "Your system prompt here"
+    
+    def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        # Processing logic
+        return {"result": "output"}
+```
+
+### Authentication & Security
+- **JWT Tokens**: Stored in localStorage, validated on protected routes
+- **Security Agent**: Real-time detection of prompt injection and manipulation attempts
+- **Session Isolation**: Each interview session independently managed
+- **CORS**: Currently configured for development (allow all origins)

@@ -52,7 +52,7 @@
         <div class="status-text">正在思考您的回答...</div>
       </div>
 
-      <!-- 播放动画 -->
+      <!-- 显示回答动画 -->
       <div v-if="isPlaying && !isCompleted" class="animation-container">
         <Vue3Lottie
             ref="lottieRef"
@@ -61,7 +61,7 @@
             :width="600"
             :height="400"
         />
-        <div class="status-text">面试官正在回答...</div>
+        <div class="status-text">面试官正在思考...</div>
       </div>
     </div>
 
@@ -213,60 +213,18 @@ const handleVerificationSuccess = () => {
   isFaceVerified.value = true;
 };
 
-const handleBackendTextResponse = (data: { response: string, audio?: string | null }) => {
+const handleBackendTextResponse = (data: { response: string }) => {
   backendResponseText.value = data.response;
   isProcessing.value = false;
 
-  const fallbackToTimer = () => {
-    // 模拟音频播放时间
-    const readingTime = Math.max(3000, data.response.length * 150); // 150ms per character, min 3s
-    isPlaying.value = true;
-    setTimeout(() => {
-      isPlaying.value = false;
-      if (!isCompleted.value) {
-        showAnswerButton.value = true;
-      }
-    }, readingTime);
-  }
-
-  if (data.audio) {
-    try {
-      const byteCharacters = atob(data.audio);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      const audioBlob = new Blob([byteArray], { type: 'audio/wav' });
-      const audioUrl = URL.createObjectURL(audioBlob);
-      const audio = new Audio(audioUrl);
-
-      isPlaying.value = true;
-      audio.play().catch(e => {
-        console.error("Audio play failed:", e);
-        fallbackToTimer();
-      });
-
-      audio.onended = () => {
-        isPlaying.value = false;
-        if (!isCompleted.value) {
-          showAnswerButton.value = true;
-        }
-        URL.revokeObjectURL(audioUrl);
-      };
-
-      audio.onerror = (e) => {
-        console.error("Audio playback error:", e);
-        URL.revokeObjectURL(audioUrl);
-        fallbackToTimer();
-      };
-    } catch (e) {
-      console.error("Error processing audio data:", e);
-      fallbackToTimer();
+  // 取消语音播放，使用固定1秒延迟
+  isPlaying.value = true;
+  setTimeout(() => {
+    isPlaying.value = false;
+    if (!isCompleted.value) {
+      showAnswerButton.value = true;
     }
-  } else {
-    fallbackToTimer();
-  }
+  }, 1000); // 固定1秒延迟
 };
 
 const startInterview = async () => {
