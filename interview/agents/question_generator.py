@@ -5,9 +5,10 @@
 
 import json
 from typing import Dict, Any, List
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from .base_agent import BaseAgent
 from .retrieval import RetrievalSystem, KnowledgeExtractor
+from interview.tools.rag_tool import rag_search as rag_search_tool
 
 
 class QuestionGeneratorAgent(BaseAgent):
@@ -33,6 +34,8 @@ class QuestionGeneratorAgent(BaseAgent):
 - 适度穿插行为/沟通类问题以评估基本素质与社交能力；
 - 必须在5-6轮内覆盖：数理逻辑、技术深度、行为面试；
 - 根据前序回答质量，快速调整后续问题难度和方向；
+- 避免围绕同一个问题反复追问；同一类型（type）的问题在全程中最多问2轮（累计），一旦某类型达到2轮上限，后续必须切换到其他类型；
+- 在有限轮次内尽量保证类型多样性与覆盖面，避免长时间停留在单一类型；
 
 输出要求（必须是严格的JSON格式）：
 {
@@ -78,6 +81,7 @@ class QuestionGeneratorAgent(BaseAgent):
         - interview_stage: 面试阶段 (opening/technical/behavioral/closing)
         - previous_qa: 之前的问答记录
         - current_score: 当前评分情况
+        - target_type: 目标题目类型（math_logic/technical/behavioral/experience），可选
         """
         print(f"===== QuestionGenerator.process() 开始执行 =====")
         try:
@@ -85,6 +89,7 @@ class QuestionGeneratorAgent(BaseAgent):
             interview_stage = input_data.get("interview_stage", "technical")
             previous_qa = input_data.get("previous_qa", [])
             current_score = input_data.get("current_score", 0)
+            target_type = input_data.get("target_type")
             
             # 如果是第一次生成问题，设置候选人上下文
             if not previous_qa and resume_data:
@@ -102,18 +107,46 @@ class QuestionGeneratorAgent(BaseAgent):
                 # 技术阶段在本场景下以数理逻辑为主；若候选人自述技能，则定向深挖该方向
                 skills = KnowledgeExtractor.extract_skills_from_resume(resume_data)
                 position = KnowledgeExtractor.extract_position_from_resume(resume_data)
+                # 确定目标题型（若未显式指定，则基于场景选择）
+                desired_type = target_type
+                if not desired_type:
+                    if skills:
+                        desired_type = "technical"
+                    else:
+                        desired_type = "math_logic"
 
-                if skills:
-                    rag_query = f"{position} {' '.join(skills)} 相关面试题（注重原理与推理）"
-                    rag_results = self.retrieval_system.rag_search(rag_query, limit=2)
+                if desired_type == "math_logic":
+                    # math_logic 下强制使用 RAG 工具以丰富题干素材
+                    base_topics = [ "逻辑推理", "组合计数", "概率直觉", "证明题"]
+                    difficulty_hint = "入门到中等难度" if current_score < 6 else "中等到偏难"
+                    rag_query = f"数理逻辑 面试题 {difficulty_hint} 主题：" + ", ".join(base_topics)
+                    try:
+                        rag_results = rag_search_tool.invoke({"query": rag_query}) if hasattr(rag_search_tool, "invoke") else rag_search_tool(rag_query)
+                    except Exception as e:
+                        rag_results = f"RAG 检索失败: {e}"
+
+                    prompt_parts.append("请生成一题 math_logic 类型的问题，强调推理链条与可验证性。")
+                    prompt_parts.append("必须给出一个可追问的变式，且两者不要过度相似。")
+                    prompt_parts.append("优先考察抽象建模、集合/图/数论直觉、或不依赖编程的算法直觉。")
+                    prompt_parts.append("避免记忆性题干；允许多步推理。")
                     prompt_parts.append(f"知识库参考内容：\n{rag_results}")
-                    prompt_parts.append(
-                        "请围绕候选人自述/简历中的已学内容，设计一个高效的核心问题直达本质理解；同时体现数理基础与严谨性。由于总轮次有限，避免过多铺垫，直接考察核心能力。"
-                    )
-                else:
-                    prompt_parts.append(
-                        "候选人未明确自述技能，请生成一题数理逻辑基础题（如离散数学/组合/概率直觉/逻辑推理/不依赖编程的算法直觉），并给出一个可追问的后续变式。请将type设置为math_logic。"
-                    )
+                    prompt_parts.append("请将 type 设置为 math_logic，并在 reasoning 中说明区分度来源。")
+
+                elif desired_type == "technical":
+                    prompt_parts.append("请围绕候选人自述/简历中的已学内容，设计一个高效的核心技术问题，直达本质理解。")
+                    prompt_parts.append("可要求解释原理、对比方案、给出边界条件分析或复杂度评估。")
+                    prompt_parts.append("如需外部知识，可自行决定是否调用 rag_search 工具。")
+                    prompt_parts.append("请将 type 设置为 technical。")
+
+                elif desired_type == "behavioral":
+                    prompt_parts.append("请生成一题行为面试问题，聚焦合作、冲突解决、反思与改进。")
+                    prompt_parts.append("问题应促使候选人给出 STAR（情境-任务-行动-结果）式回答。")
+                    prompt_parts.append("请将 type 设置为 behavioral。")
+
+                else:  # experience 或缺省
+                    prompt_parts.append("请生成一题结合候选人经历的经验复盘题，要求抽象出可迁移方法论。")
+                    prompt_parts.append("可引导给出关键指标、失败教训与下一步优化策略。")
+                    prompt_parts.append("请将 type 设置为 experience。")
             elif interview_stage == "behavioral":
                 prompt_parts.append(
                     "请生成一个高效的行为面试问题，重点评估基本素质与与人交往能力，如合作、倾听、冲突解决、尊重他人与表达清晰度。问题需与校园科研/团队作业场景贴合，且能在一个回答中体现多个维度。"
@@ -126,6 +159,21 @@ class QuestionGeneratorAgent(BaseAgent):
                 prompt_parts.append(f"之前的问答记录：\n{qa_history}")
                 prompt_parts.append(f"当前平均分: {current_score}/10")
                 prompt_parts.append(f"当前是第{len(previous_qa)+1}轮（总共5-6轮），请根据候选人的回答情况和剩余轮次，生成一个高效且有针对性的问题。")
+
+                # 类型使用统计与上限约束
+                type_counts = self._count_question_types(previous_qa)
+                if type_counts:
+                    reached_limit_types = [t for t, c in type_counts.items() if c >= 2]
+                    prompt_parts.append(f"类型使用统计（累计）: {json.dumps(type_counts, ensure_ascii=False)}")
+                    if reached_limit_types:
+                        blocked = ", ".join(reached_limit_types)
+                        prompt_parts.append(
+                            f"以下类型已达到2轮上限：{blocked}。新问题必须避开这些类型，并切换到尚未达上限的其他类型，优先覆盖未考察的类型。"
+                        )
+                # 全局规则重申（即使无统计数据也需遵守）
+                prompt_parts.append(
+                    "请严格遵守类型上限与多样性规则：同一类型在全程最多2轮；避免在同一问题上持续追问，必要时切换到不同类型以提高覆盖度。"
+                )
             
             human_message_content = "\n\n".join(prompt_parts)
             
@@ -134,7 +182,7 @@ class QuestionGeneratorAgent(BaseAgent):
                 HumanMessage(content=human_message_content)
             ]
             
-            response = self._invoke_model(messages)
+            response = self._invoke_with_tools(messages)
             
             # 输出原始响应内容
             print(f"===== QuestionGenerator 原始响应 =====")
@@ -170,6 +218,45 @@ class QuestionGeneratorAgent(BaseAgent):
                 "difficulty": "easy",
                 "reasoning": "Default question due to error"
             }
+
+    def _invoke_with_tools(self, messages: List[Any]) -> str:
+        """
+        允许 LLM 自主决定是否调用工具（rag_search），并循环执行工具调用直至获得最终回答。
+        """
+        try:
+            tools = [rag_search_tool]
+            model_with_tools = self.model.bind_tools(tools)
+
+            history = list(messages)
+            while True:
+                print(f"===== {self.name} 开始调用LLM（tools-enabled） =====")
+                ai_msg = model_with_tools.invoke(history)
+                print(f"===== {self.name} LLM调用完成 =====")
+
+                # 若模型直接给出答案
+                tool_calls = getattr(ai_msg, "tool_calls", None)
+                if not tool_calls:
+                    return ai_msg.content
+
+                # 否则执行工具并继续循环
+                history.append(ai_msg)
+                for tool_call in tool_calls:
+                    tool_name = tool_call.get("name") if isinstance(tool_call, dict) else tool_call.name
+                    tool_args = tool_call.get("args", {}) if isinstance(tool_call, dict) else tool_call.args
+                    tool_id = tool_call.get("id") if isinstance(tool_call, dict) else tool_call.id
+
+                    if tool_name == "rag_search":
+                        try:
+                            result = rag_search_tool.invoke(tool_args) if hasattr(rag_search_tool, "invoke") else rag_search_tool(**tool_args)
+                        except Exception as e:
+                            result = f"执行 RAG 搜索时出错: {e}"
+                    else:
+                        result = f"未识别的工具: {tool_name}"
+
+                    history.append(ToolMessage(content=str(result), name=tool_name, tool_call_id=tool_id))
+        except Exception as e:
+            print(f"_invoke_with_tools 调用失败，降级为纯文本生成: {e}")
+            return self._invoke_model(messages)
     
     def generate_initial_questions(self, resume_data: Dict[str, Any], count: int = 3) -> List[Dict[str, Any]]:
         """生成初始问题集"""
@@ -231,3 +318,17 @@ class QuestionGeneratorAgent(BaseAgent):
         JSON解析失败时直接返回整个字符串
         """
         return raw_response.strip()
+
+    def _count_question_types(self, previous_qa: List[Dict[str, Any]]) -> Dict[str, int]:
+        """
+        统计历史问答中各类型（type）的出现次数，仅统计包含 'type' 字段的项。
+        """
+        counts: Dict[str, int] = {}
+        if not previous_qa:
+            return counts
+        for qa in previous_qa:
+            qa_type = qa.get("type")
+            if not qa_type:
+                continue
+            counts[qa_type] = counts.get(qa_type, 0) + 1
+        return counts

@@ -13,7 +13,7 @@ except ImportError:
 
 # 新的多智能体系统
 from .agents import MultiAgentCoordinator
-from .llm import deep_seek_model, gemini_model
+from .llm import gemini_model, chatgpt_model
 
 # 在Django应用启动时加载环境变量
 load_dotenv()
@@ -27,10 +27,10 @@ def get_coordinator():
     global _global_coordinator
     if _global_coordinator is None:
         models = {
-            "question_model": deep_seek_model,
-            "scoring_model": deep_seek_model,
-            "security_model": gemini_model,
-            "summary_model": deep_seek_model
+            "question_model": chatgpt_model,
+            "scoring_model": chatgpt_model,
+            "security_model": gemini_model,  # 使用不同模型进行安全检测
+            "summary_model": gemini_model
         }
         _global_coordinator = MultiAgentCoordinator(models)
     return _global_coordinator

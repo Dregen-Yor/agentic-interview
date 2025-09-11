@@ -65,47 +65,14 @@ class RetrievalSystem:
             return {"error": f"检索简历时发生错误: {str(e)}"}
     
     def rag_search(self, query: str, limit: int = 3) -> str:
-        """使用向量搜索在知识库中查找相关信息"""
-        print(f"--- RAG搜索查询: '{query}' ---")
-        
-        query_embedding = self.get_embedding(query)
-        if not query_embedding:
-            return "抱歉，无法为您的查询生成向量，无法进行搜索。"
-        
-        pipeline = [
-            {
-                "$vectorSearch": {
-                    "index": "vector_index",
-                    "path": "content_vector",
-                    "queryVector": query_embedding,
-                    "numCandidates": 100,
-                    "limit": limit,
-                }
-            },
-            {
-                "$project": {
-                    "_id": 0,
-                    "content": 1,
-                    "score": {"$meta": "vectorSearchScore"},
-                }
-            },
-        ]
-        
+        """使用外部工具 rag_search 执行RAG检索（保留兼容接口）"""
         try:
-            results = list(self.problem_collection.aggregate(pipeline))
-            if not results:
-                return "在知识库中没有找到相关信息。"
-            
-            # Format the results
-            formatted_results = "从知识库中找到以下相关信息：\n\n"
-            for i, doc in enumerate(results):
-                formatted_results += f"--- 相关文档 {i+1} (相似度: {doc['score']:.4f}) ---\n"
-                formatted_results += doc.get("content", "没有内容。") + "\n\n"
-            
-            return formatted_results.strip()
-            
+            # 延迟导入工具，避免循环依赖
+            from interview.tools.rag_tool import rag_search as tool_rag_search
+            return tool_rag_search.invoke({"query": query}) if hasattr(tool_rag_search, "invoke") else tool_rag_search(query)
         except Exception as e:
-            return f"执行 RAG 搜索时出错: {e}"
+            print(f"调用 rag_search 工具失败，fallback 到空结果: {e}")
+            return "在知识库中没有找到相关信息。"
     
     def get_interview_questions_from_kb(self, position: str, skills: List[str], difficulty: str = "medium") -> List[str]:
         """从知识库获取相关面试题目"""

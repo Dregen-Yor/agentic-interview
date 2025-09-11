@@ -4,7 +4,7 @@ import httpx
 import base64
 from channels.generic.websocket import AsyncWebsocketConsumer
 from .agents import MultiAgentCoordinator
-from .llm import deep_seek_model, gemini_model
+from .llm import chatgpt_model, gemini_model
 
 class InterviewConsumer(AsyncWebsocketConsumer):
     """
@@ -19,10 +19,10 @@ class InterviewConsumer(AsyncWebsocketConsumer):
         
         # 初始化多智能体协调器
         models = {
-            "question_model": deep_seek_model,
-            "scoring_model": deep_seek_model,
+            "question_model": chatgpt_model,
+            "scoring_model": chatgpt_model,
             "security_model": gemini_model,  # 使用不同模型进行安全检测
-            "summary_model": deep_seek_model
+            "summary_model": gemini_model
         }
         self.coordinator = MultiAgentCoordinator(models)
         

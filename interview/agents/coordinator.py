@@ -188,8 +188,7 @@ class MultiAgentCoordinator:
                 "question": current_qa["question"],
                 "answer": user_answer,
                 "question_type": current_qa["question_type"],
-                "difficulty": current_qa["difficulty"],
-                "resume_data": session.resume_data
+                "difficulty": current_qa["difficulty"]
             })
             
             current_qa["score_details"] = scoring_result

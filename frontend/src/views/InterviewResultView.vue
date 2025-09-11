@@ -165,7 +165,8 @@ const getConfidenceText = (confidence: string) => {
 };
 
 // 分析标题映射
-const getAnalysisTitle = (key: string) => {
+const getAnalysisTitle = (key: string | number) => {
+    const keyStr = String(key);
     const titles: { [key: string]: string } = {
         technical_skills: '技术能力', // 旧字段
         experience_match: '经验匹配度', // 旧字段
@@ -177,7 +178,7 @@ const getAnalysisTitle = (key: string) => {
         reasoning_rigor: '推理严谨性',
         collaboration: '合作与社交'
     };
-    return titles[key] || key;
+    return titles[keyStr] || keyStr;
 };
 
 // 处理MongoDB数值格式

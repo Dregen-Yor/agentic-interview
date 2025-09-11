@@ -30,13 +30,20 @@ class ScoringAgent(BaseAgent):
 - C：不推荐（通常对应平均分5.0-6.9）
 - D：基本不能录取（通常对应平均分<5.0）
 
+重要约束（评分触发条件）：
+- 系统不会遇到任何网络或“审查延迟”问题；若实际发生将直接中断通话，你不会收到任何提示。
+- 当且仅当你“看到有效的解答”时才给出分数。有效解答指：给出正确结论，或提供完整且可核验的推导并明确最终答案。
+- 若没有有效解答（如仅有讨论、质疑、无结论或无法验证），请直接给出0分。
+
 评分原则：
 - 面向大一新生的起点，不以术语堆砌为主，重在思维质量；
+- 能给出正确答案应给出至少8分，其余依据解题过程提升分数；
+- 不要给出过低的分数，除非真的非常差；
 - 对自述已学内容可适度提高期望；
 - 对不确定题可看思路、假设、拆解与验证方法；
 - 关注逻辑一致性与可检验性。
 
-请以严格的JSON格式返回评分结果：
+当存在有效解答时，请以严格的JSON格式返回评分结果：
 {
     "score": 总分(1-10),
     "letter": "A/B/C/D",
@@ -72,7 +79,7 @@ class ScoringAgent(BaseAgent):
         - answer: 候选人回答
         - question_type: 问题类型
         - difficulty: 问题难度
-        - resume_data: 简历信息（用于经验匹配评估）
+        - resume_data: 简历信息（不参与评分，仅为兼容字段，将被忽略）
         """
         print(f"===== ScoringAgent.process() 开始执行 =====")
         try:
@@ -80,7 +87,8 @@ class ScoringAgent(BaseAgent):
             answer = input_data.get("answer", "")
             question_type = input_data.get("question_type", "general")
             difficulty = input_data.get("difficulty", "medium")
-            resume_data = input_data.get("resume_data", {})
+            # 为保持接口兼容接收，但评分不使用简历信息
+            _ = input_data.get("resume_data", {})
             
             # 构建评分prompt
             prompt_content = f"""
@@ -91,8 +99,8 @@ class ScoringAgent(BaseAgent):
 问题: {question}
 候选人回答: {answer}
 
-候选人简历背景: {json.dumps(resume_data, ensure_ascii=False, indent=2) if resume_data else '无'}
-
+重要：评分时只依据回答本身的表现，不考虑任何简历或背景信息。
+ 若未见到有效解答（无正确结论或不可验证），直接给0分。
 请根据评分标准给出详细的评分结果。
 """
             
