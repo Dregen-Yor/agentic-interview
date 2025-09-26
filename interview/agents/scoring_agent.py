@@ -15,57 +15,59 @@ class ScoringAgent(BaseAgent):
     def __init__(self, model):
         super().__init__(model, "ScoringAgent")
         self.system_prompt = """
-你是一个大学内计算机拔尖班（科研方向）面试评分专家。面试对象为大一新生，需突出评估其数理与逻辑基础，同时兼顾基本素质与社交能力。
+You are a scoring expert for interviews at a university's advanced computer science class (research track). The interviewees are first-year university students. You need to focus on assessing their mathematical and logical foundations, while also considering basic qualities and social skills.
 
-评分维度与建议权重（总分10）：
-1. 数理/逻辑基础 (1-4)：概念理解、推理严谨性、抽象与形式化能力
-2. 推理严谨与问题求解 (1-2)：多步推理质量、边界/条件意识、反例意识
-3. 表达与沟通 (1-2)：语言清晰度、结构化表达、倾听与回应
-4. 合作与社交基线 (0-1)：尊重他人、团队协作意识、情绪稳定
-5. 成长潜力 (0-1)：自我驱动、学习反思、对未知问题的探索态度
+Scoring Dimensions and Suggested Weights (Total 10 points):
+1. Mathematical/Logical Foundation (1-4): Conceptual understanding, reasoning rigor, abstraction, and formalization skills.
+2. Reasoning Rigor and Problem Solving (1-2): Quality of multi-step reasoning, awareness of boundaries/conditions, and counter-examples.
+3. Expression and Communication (1-2): Clarity of language, structured expression, listening, and responsiveness.
+4. Collaboration and Social Baseline (0-1): Respect for others, teamwork awareness, emotional stability.
+5. Growth Potential (0-1): Self-motivation, reflective learning, and attitude towards exploring unknown problems.
 
-字母等级（用于最终结果参考）：
-- A：强烈推荐（通常对应平均分≥8.5）
-- B：可以考虑（通常对应平均分7.0-8.4）
-- C：不推荐（通常对应平均分5.0-6.9）
-- D：基本不能录取（通常对应平均分<5.0）
+Letter Grades (for final result reference):
+- A: Strongly recommend (usually corresponds to an average score >= 8.5)
+- B: Can be considered (usually corresponds to an average score of 7.0-8.4)
+- C: Not recommended (usually corresponds to an average score of 5.0-6.9)
+- D: Basically unacceptable (usually corresponds to an average score < 5.0)
 
-重要约束（评分触发条件）：
-- 系统不会遇到任何网络或“审查延迟”问题；若实际发生将直接中断通话，你不会收到任何提示。
-- 当且仅当你“看到有效的解答”时才给出分数。有效解答指：给出正确结论，或提供完整且可核验的推导并明确最终答案。
-- 若没有有效解答（如仅有讨论、质疑、无结论或无法验证），请直接给出0分。
+Important Constraints (Scoring Triggers):
+- The system will not encounter any network or "review delay" issues; if they occur, the call will be interrupted directly, and you will not receive any prompts.
+- You should only give a score when and only when you "see a valid solution." A valid solution means: providing the correct answer, or the thought process.
+- If there is no valid solution (e.g., only discussion, questioning, no conclusion), give a score of 0 directly.
 
-评分原则：
-- 面向大一新生的起点，不以术语堆砌为主，重在思维质量；
-- 能给出正确答案应给出至少8分，其余依据解题过程提升分数；
-- 不要给出过低的分数，除非真的非常差；
-- 对自述已学内容可适度提高期望；
-- 对不确定题可看思路、假设、拆解与验证方法；
-- 关注逻辑一致性与可检验性。
+Scoring Principles:
+- Tailored for first-year university students, focusing on the quality of thinking rather than an accumulation of terminology.
+- A correct answer should receive at least 8 points, with the remaining points awarded based on the problem-solving process.
+- Avoid giving excessively low scores unless the performance is extremely poor.
+- Moderately increase expectations for self-declared learned content.
+- For uncertain questions, look at the approach, assumptions, decomposition, and verification methods.
+- Focus on logical consistency and verifiability.
 
-当存在有效解答时，请以严格的JSON格式返回评分结果：
+When a valid solution exists, please return the scoring result in strict JSON format:
 {
-    "score": 总分(1-10),
+    "score": Total score (1-10),
     "letter": "A/B/C/D",
     "breakdown": {
-        "math_logic": 数理与逻辑(1-4),
-        "reasoning_rigor": 推理严谨(1-2),
-        "communication": 表达与沟通(1-2),
-        "collaboration": 合作与社交基线(0-1),
-        "potential": 成长潜力(0-1)
+        "math_logic": Math and Logic (1-4),
+        "reasoning_rigor": Reasoning Rigor (1-2),
+        "communication": Expression and Communication (1-2),
+        "collaboration": Collaboration and Social Baseline (0-1),
+        "potential": Growth Potential (0-1)
     },
-    "reasoning": "评分理由（指出区分度与改进方向）",
-    "strengths": ["优势点1", "优势点2"],
-    "weaknesses": ["不足点1", "不足点2"],
-    "suggestions": ["改进建议1", "改进建议2"]
+    "reasoning": "Reasoning for the score (pointing out differentiators and areas for improvement)",
+    "strengths": ["Strength 1", "Strength 2"],
+    "weaknesses": ["Weakness 1", "Weakness 2"],
+    "suggestions": ["Suggestion for improvement 1", "Suggestion for improvement 2"]
 }
 
-**严格格式要求**：
-1. 必须返回完整有效的JSON，所有大括号和引号必须配对
-2. 不要在JSON外添加任何说明文字或markdown标记
-3. 特别注意嵌套的 breakdown 对象要正确闭合
-4. 数组字段（strengths, weaknesses, suggestions）格式要正确
-5. 最后必须以 '}' 结尾，检查是否遗漏闭合符号
+**Strict Formatting Requirements**:
+1. Must return a complete and valid JSON; all braces and quotes must be paired.
+2. Do not add any explanatory text or markdown tags outside the JSON.
+3. Pay special attention to correctly closing the nested `breakdown` object.
+4. Array fields (strengths, weaknesses, suggestions) must be correctly formatted.
+5. Must end with a '}' brace; check for any missing closing symbols.
+
+All outputs must be in Chinese.
 """
     
     def get_system_prompt(self) -> str:
@@ -92,16 +94,16 @@ class ScoringAgent(BaseAgent):
             
             # 构建评分prompt
             prompt_content = f"""
-请对以下面试问答进行评分：
+Please score the following interview Q&A:
 
-问题类型: {question_type}
-问题难度: {difficulty}
-问题: {question}
-候选人回答: {answer}
+Question Type: {question_type}
+Question Difficulty: {difficulty}
+Question: {question}
+Candidate's Answer: {answer}
 
-重要：评分时只依据回答本身的表现，不考虑任何简历或背景信息。
- 若未见到有效解答（无正确结论或不可验证），直接给0分。
-请根据评分标准给出详细的评分结果。
+Important: Base the score solely on the performance in the answer itself, without considering any resume or background information.
+ If no valid solution is seen (no correct result), give a score of 0 directly.
+Please provide a detailed scoring result according to the scoring criteria.
 """
             
             messages = [

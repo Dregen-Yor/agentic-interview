@@ -25,6 +25,7 @@ dependencies = [
     "pip>=25.1.1", # Python包管理工具
     "pyjwt>=2.10.1", # JWT令牌处理库
     "pymongo>=4.13.0", # MongoDB Python驱动
+    "pypdf2>=3.0.1",
     "python-dotenv>=1.1.0", # 环境变量文件支持
     "tqdm>=4.67.1", # 进度条显示库
 ]

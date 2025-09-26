@@ -1,0 +1,149 @@
+h=  h
+^[ah    ^C2025-09-13 16:32:44,111 INFO     Killed 0 pending application instances
+[1m[7m%[27m[1m[0m                                                                                                                      k..tic-interview\[0m[27m[24m[J[0m[49m[39m
+[A[0m[49m[39m[0m[49m[39m[0m[49m [0m[49m[38;5;31m [1m[38;5;31m[38;5;39m~[0m[38;5;39m[49m[38;5;31m/[1m[38;5;31m[38;5;39magentic-interview[0m[38;5;39m[49m[38;5;31m[0m[38;5;31m[49m[38;5;31m[0m[38;5;31m[49m [0m[38;5;31m[49m[38;5;178m[0m[38;5;178m[49m[38;5;76m[0m[38;5;76m[49m[38;5;178m [38;5;76m main [38;5;76m⇡2 [38;5;178m!7 [38;5;39m?34[0m[38;5;39m[49m[38;5;178m[0m[38;5;178m[49m[30m [0m[30m[49m[39m[38;5;244m···[0m[38;5;244m[49m[30m [0m[30m[49m[38;5;101m 11h 7m 42s[0m[38;5;101m[49m[38;5;101m[0m[38;5;101m[49m[38;5;101m[0m[38;5;101m[49m[38;5;37m  agentic-interview[0m[38;5;37m[49m[38;5;37m[0m[38;5;37m[49m[38;5;37m[0m[38;5;37m[49m[38;5;37m  base[0m[38;5;37m[49m[38;5;37m[0m[38;5;37m[49m[38;5;37m[0m[38;5;37m[49m[38;5;180m sunupdate@localhost[0m[38;5;180m[49m[38;5;180m[0m[38;5;180m[49m[38;5;180m[0m[38;5;180m[49m[38;5;66m  00:32:44[0m[38;5;66m[49m[38;5;66m[0m[38;5;66m[49m[38;5;66m[0m[38;5;66m[49m[39m
+[0m[49m[39m[0m[49m[38;5;76m❯[0m[38;5;76m[49m[38;5;76m[0m[38;5;76m[49m[30m[0m[30m[49m[39m [0m[49m[39m[K[?1h=[?2004h[32mdaphne[39m -b 0.0.0.0 -p 8000 interview_backend.asgi:application[?1l>[?2004l
+kdaphne\2025-09-13 16:32:47,973 INFO     Starting server at tcp:port=8000:interface=0.0.0.0
+2025-09-13 16:32:47,974 INFO     HTTP/2 support not enabled (install the http2 and tls Twisted extras)
+2025-09-13 16:32:47,974 INFO     Configuring endpoint tcp:port=8000:interface=0.0.0.0
+2025-09-13 16:32:47,974 INFO     Listening on TCP address 0.0.0.0:8000
+10.102.21.87:13154 - - [14/Sep/2025:00:49:19] "OPTIONS /api/verify/" 200 -
+Unauthorized: /api/verify/
+2025-09-14 00:49:19,572 WARNING  Unauthorized: /api/verify/
+10.102.21.87:13154 - - [14/Sep/2025:00:49:19] "POST /api/verify/" 401 30
+172.25.194.150:54084 - - [14/Sep/2025:00:51:14] "OPTIONS /api/check/" 200 -
+172.25.194.150:54084 - - [14/Sep/2025:00:51:17] "POST /api/check/" 200 236
+172.25.194.150:54084 - - [14/Sep/2025:00:51:17] "OPTIONS /api/verify/" 200 -
+172.25.194.150:54084 - - [14/Sep/2025:00:51:17] "POST /api/verify/" 200 68
+172.25.194.150:54084 - - [14/Sep/2025:00:51:24] "POST /api/verify/" 200 68
+172.25.194.150:54096 - - [14/Sep/2025:00:51:25] "WSCONNECTING /ws/interview/VGYMkE1RQHx65RiIVuMXM/" - -
+SummaryAgent: MongoDB连接成功
+172.25.194.150:54096 - - [14/Sep/2025:00:51:25] "WSCONNECT /ws/interview/VGYMkE1RQHx65RiIVuMXM/" - -
+WebSocket连接已建立: VGYMkE1RQHx65RiIVuMXM
+开始面试会话: VGYMkE1RQHx65RiIVuMXM, 候选人: 毛洋洋
+===== QuestionGenerator.process() 开始执行 =====
+===== QuestionGenerator 开始调用LLM（tools-enabled） =====
+2025-09-14 00:51:36,382 INFO     HTTP Request: POST https://api.chatanywhere.tech/v1/chat/completions "HTTP/1.1 200 OK"
+===== QuestionGenerator LLM调用完成 =====
+===== QuestionGenerator 原始响应 =====
+{
+  "question": "有三枚硬币：公平、正面两面、反面两面。随机选一抛出正面，哪枚硬币被选概率最大？说明理由。",
+  "type": "math_logic",
+  "difficulty": "easy",
+  "reasoning": "作为开场，这道题简单易懂，考察条件概率和逻辑推理能力。通过观察应聘者是否能用清晰的步骤计算概率並解释理由，可快速分辨其抽象与推理能力，以及表达条理性。题目难度符合高中到大学一年级基础，能与候选人简历中提到的数学兴趣和解题习惯相呼应。"
+}
+=====================================
+
+===== SecurityAgent 开始调用LLM =====
+2025-09-14 00:52:08,927 INFO     HTTP Request: POST https://api.chatanywhere.tech/v1/chat/completions "HTTP/1.1 200 OK"
+===== SecurityAgent LLM调用完成 =====
+===== SecurityAgent 原始响应 =====
+```json
+{
+    "is_safe": false,
+    "risk_level": "medium",
+    "detected_issues": ["与面试目标无关的垃圾信息或异常内容"],
+    "reasoning": "用户输入的内容为重复的无意义发音（'哼哼啊啊啊啊啊'），与当前面试问题（关于硬币概率）完全无关，不构成任何有效回答。这表明了不认真对待面试的态度或异常行为，不属于正常回答范畴。",
+    "suggested_action": "warning"
+}
+```
+==================================
+
+===== 安全检查结果 =====
+风险等级: medium
+建议操作: warning
+是否安全: False
+检测问题: ['与面试目标无关的垃圾信息或异常内容']
+========================
+⚠️ 安全警报：检测到恶意输入，直接终止面试
+🚨 执行安全终止面试流程: VGYMkE1RQHx65RiIVuMXM
+===== SummaryAgent 开始调用LLM =====
+2025-09-14 00:52:25,485 INFO     HTTP Request: POST https://api.chatanywhere.tech/v1/chat/completions "HTTP/1.1 200 OK"
+===== SummaryAgent LLM调用完成 =====
+===== SummaryAgent 原始响应 =====
+{
+    "final_grade": "D",
+    "final_decision": "reject",
+    "overall_score": 0.0,
+    "summary": "候选人在面试中对唯一的问题给出了毫无意义的回复 (\"哼哼啊啊啊啊啊\")，导致面试因安全违规而终止。此举完全未能展现其数学逻辑、推理能力、沟通表达等任何核心评估维度，也反映出其在面试场合的基本专业素养和应对能力严重不足。鉴于此，无法对其进行有效评估，且其表现已远低于录取标准。",
+    "strengths": [],
+    "weaknesses": [
+        "沟通能力极差：未能对面试问题给出任何有意义的反馈或尝试回答。",
+        "问题参与度低：完全没有尝试理解或解决问题，直接给出无关内容。",
+        "缺乏专业素养：在正式面试场合给出不恰当且无意义的回复，导致面试提前终止。"
+    ],
+    "recommendations": {
+        "for_candidate": "建议候选人认真反思在正式场合的沟通方式和专业素养。在未来的面试中，应确保能够清晰、有逻辑地回答问题，即使遇到不会的问题也应尝试说明思路或承认不足，而非给出无关内容。同时，加强对面试礼仪和基本应对策略的理解和实践。",
+        "for_program": "强烈建议不予录取。候选人在面试中的表现完全无法满足项目对学生的基本要求，无法对其学术潜力进行有效评估。"
+    },
+    "confidence_level": "high",
+    "detailed_analysis": {
+        "math_logic": "无法评估。候选人未能对问题给出任何有意义的数学或逻辑回应，因此无法判断其概念理解、抽象能力、形式化或严谨性。",
+        "reasoning_rigor": "无法评估。候选人未尝试进行任何推理或问题解决，因此无法对其多步推理质量、边界意识或反例意识进行考察。",
+        "communication": "极差。候选人给出的回答是无意义的字符组合，完全无法进行有效沟通。这直接导致了面试的终止，显示其基本沟通能力和响应能力存在严重问题。",
+        "collaboration": "极差。在面试这一初步的互动环节中，候选人未能表现出对面试过程或面试官的任何尊重，其行为完全阻碍了任何形式的交流。这显示出其在协作和社交基线方面存在严重缺陷。",
+        "growth_potential": "无法从面试表现中评估。尽管简历中提及了对学习和提升的兴趣，但面试中的非专业和无意义回应与这些描述完全不符。这种行为使得评估其学习动机、反思能力、研究兴趣或探索态度成为不可能。"
+    }
+}
+=================================
+
+面试结果已保存，ID: 68c611c94a95dd7bfd1c79af
+面试记忆已保存: VGYMkE1RQHx65RiIVuMXM
+记忆已保存到存储: VGYMkE1RQHx65RiIVuMXM
+已清理会话: VGYMkE1RQHx65RiIVuMXM
+🚨 发送安全终止消息: {'type': 'security_termination', 'response': '面试已因安全违规终止。检测到：与面试目标无关的垃圾信息或异常内容。所有数据已保存。', 'status': 'terminated_security', 'final_decision': 'reject', 'final_grade': 'F', 'overall_score': 0, 'summary': '面试因安全违规提前终止。候选人在面试中对唯一的问题给出了毫无意义的回复 ("哼哼啊啊啊啊啊")，导致面试因安全违规而终止。此举完全未能展现其数学逻辑、推理能力、沟通表达等任何核心评估维度，也反映出其在面试场合的基本专业素养和应对能力严重不足。鉴于此，无法对其进行有效评估，且其表现已远低于录取标准。', 'total_questions': 1, 'average_score': 0, 'termination_reason': 'security_violation', 'violation_details': {'detected_issues': ['与面试目标无关的垃圾信息或异常内容'], 'risk_level': 'medium', 'reasoning': "用户输入的内容为重复的无意义发音（'哼哼啊啊啊啊啊'），与当前面试问题（关于硬币概率）完全无关，不构成任何有效回答。这表明了不认真对待面试的态度或异常行为，不属于正常回答范畴。", 'malicious_input': '哼哼啊啊啊啊啊\n'}}
+172.25.194.150:54096 - - [14/Sep/2025:00:52:28] "WSDISCONNECT /ws/interview/VGYMkE1RQHx65RiIVuMXM/" - -
+已清理会话: VGYMkE1RQHx65RiIVuMXM
+WebSocket连接已断开: VGYMkE1RQHx65RiIVuMXM
+172.25.194.150:54172 - - [14/Sep/2025:00:52:47] "POST /api/verify/" 200 68
+172.25.194.150:54185 - - [14/Sep/2025:00:52:48] "WSCONNECTING /ws/interview/Zm5SXIvTFiHxk2DYNhRw3/" - -
+SummaryAgent: MongoDB连接成功
+172.25.194.150:54185 - - [14/Sep/2025:00:52:49] "WSCONNECT /ws/interview/Zm5SXIvTFiHxk2DYNhRw3/" - -
+WebSocket连接已建立: Zm5SXIvTFiHxk2DYNhRw3
+开始面试会话: Zm5SXIvTFiHxk2DYNhRw3, 候选人: 毛洋洋
+===== QuestionGenerator.process() 开始执行 =====
+===== QuestionGenerator 开始调用LLM（tools-enabled） =====
+2025-09-14 00:52:57,393 INFO     HTTP Request: POST https://api.chatanywhere.tech/v1/chat/completions "HTTP/1.1 200 OK"
+===== QuestionGenerator LLM调用完成 =====
+===== QuestionGenerator 原始响应 =====
+{
+    "question": "三人中只有一个喜欢数学。甲说乙喜欢数学，乙说丙喜欢数学，丙说甲不喜欢数学。谁喜欢数学？",
+    "type": "math_logic",
+    "difficulty": "easy",
+    "reasoning": "作为第一轮的开场题，题目简单友好，符合高中水平并与候选人自述的数学兴趣相关。通过限定“只有一个喜欢数学”并给出三条陈述，能够检验候选人的命题推理能力、逐一排除与假设验证的习惯，以及表达推理过程的清晰度。题目避免专业术语，不要求复杂证明，便于快速判别思维严谨程度，后续可根据答案质量适当加深难度或转向其他知识点。"
+}
+=====================================
+
+^[[A^[[A^[[A^[[A^[[A^[[A^[[A^[[A^[[A^[[A^[[B^[[B                                                三人中只有一个喜欢数学。甲说乙喜欢数学，乙说丙喜欢数学，丙说甲不喜欢数学。谁喜欢数学？172.25.194.150:54185 - - [14/Sep/2025:00:55:55] "WSDISCONNECT /ws/interview/Zm5SXIvTFiHxk2DYNhRw3/" - -
+已清理会话: Zm5SXIvTFiHxk2DYNhRw3
+WebSocket连接已断开: Zm5SXIvTFiHxk2DYNhRw3
+172.25.194.150:54723 - - [14/Sep/2025:00:55:55] "POST /api/verify/" 200 68
+172.25.194.150:54725 - - [14/Sep/2025:00:55:57] "WSCONNECTING /ws/interview/uRQu_nJkwmTFSntwPwF1Z/" - -
+SummaryAgent: MongoDB连接成功
+172.25.194.150:54725 - - [14/Sep/2025:00:55:57] "WSCONNECT /ws/interview/uRQu_nJkwmTFSntwPwF1Z/" - -
+WebSocket连接已建立: uRQu_nJkwmTFSntwPwF1Z
+开始面试会话: uRQu_nJkwmTFSntwPwF1Z, 候选人: 毛洋洋
+===== QuestionGenerator.process() 开始执行 =====
+===== QuestionGenerator 开始调用LLM（tools-enabled） =====
+2025-09-14 00:56:06,881 INFO     HTTP Request: POST https://api.chatanywhere.tech/v1/chat/completions "HTTP/1.1 200 OK"
+===== QuestionGenerator LLM调用完成 =====
+===== QuestionGenerator 原始响应 =====
+{
+    "question": "甲说乙在说谎，乙说丙在说谎，丙说甲在说谎。谁在说真话?",
+    "type": "math_logic",
+    "difficulty": "easy",
+    "reasoning": "这是开场的简单逻辑推理题，便于快速判断考生的枚举和排除能力。题目不涉及复杂证明，仅需通过列出可能性或利用对称性判断真假的组合，能反映思路清晰度与表述简洁性。结合简历中提到的爱钻研但有时钻牛角尖的特点，此题鼓励候选人以简洁的案例分析给出结论，方便在后续轮次根据答案深挖推理细节或提高难度。"
+}
+=====================================
+
+172.25.194.150:54725 - - [14/Sep/2025:00:58:14] "WSDISCONNECT /ws/interview/uRQu_nJkwmTFSntwPwF1Z/" - -
+已清理会话: uRQu_nJkwmTFSntwPwF1Z
+WebSocket连接已断开: uRQu_nJkwmTFSntwPwF1Z
+172.25.194.150:54879 - - [14/Sep/2025:00:58:14] "POST /api/verify/" 200 68
+172.25.194.150:54882 - - [14/Sep/2025:00:58:15] "WSCONNECTING /ws/interview/gYr1BX_sgdr12wbW7Snj7/" - -
+SummaryAgent: MongoDB连接成功
+172.25.194.150:54882 - - [14/Sep/2025:00:58:16] "WSCONNECT /ws/interview/gYr1BX_sgdr12wbW7Snj7/" - -
+WebSocket连接已建立: gYr1BX_sgdr12wbW7Snj7
+开始面试会话: gYr1BX_sgdr12wbW7Snj7, 候选人: 毛洋洋
+===== QuestionGenerator.process() 开始执行 =====
+===== QuestionGenerator 开始调用LLM（tools-enabled） =====
