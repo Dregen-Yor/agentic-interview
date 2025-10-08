@@ -1,6 +1,6 @@
 """
-基础智能体抽象类
-定义所有专门智能体的通用接口和基本功能
+Base Agent Abstract Class
+Defines common interfaces and basic functionality for all specialized agents
 """
 
 from abc import ABC, abstractmethod
@@ -10,36 +10,36 @@ from langchain_openai import ChatOpenAI
 
 
 class BaseAgent(ABC):
-    """智能体基类，定义通用接口"""
-    
+    """Agent base class, defines common interfaces"""
+
     def __init__(self, model: ChatOpenAI, name: str):
         self.model = model
         self.name = name
         self.system_prompt = ""
-    
+
     @abstractmethod
     def get_system_prompt(self) -> str:
-        """获取系统提示词"""
+        """Get system prompt"""
         pass
-    
+
     @abstractmethod
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """处理输入数据并返回结果"""
+        """Process input data and return result"""
         pass
-    
+
     def _invoke_model(self, messages: List[BaseMessage]) -> str:
-        """调用LLM模型"""
+        """Invoke LLM model"""
         try:
-            print(f"===== {self.name} 开始调用LLM =====")
+            print(f"===== {self.name} starting LLM invocation =====")
             response = self.model.invoke(messages)
-            print(f"===== {self.name} LLM调用完成 =====")
+            print(f"===== {self.name} LLM invocation completed =====")
             return response.content
         except Exception as e:
             print(f"Error invoking model in {self.name}: {e}")
             return f"Error: {str(e)}"
-    
+
     def set_system_prompt(self, prompt: str):
-        """设置系统提示词"""
+        """Set system prompt"""
         self.system_prompt = prompt
 
 

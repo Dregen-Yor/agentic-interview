@@ -1,6 +1,6 @@
 """
-总结智能体
-对面试过程进行总结并做出最终决定
+Summary Agent
+Summarizes the interview process and makes final decisions
 """
 
 import json
@@ -14,19 +14,19 @@ from .base_agent import BaseAgent
 
 
 class SummaryAgent(BaseAgent):
-    """总结智能体"""
-    
+    """Summary Agent"""
+
     def __init__(self, model):
         super().__init__(model, "SummaryAgent")
 
-        # MongoDB连接初始化
+        # MongoDB connection initialization
         try:
             self.client = pymongo.MongoClient(os.getenv("MONGODB_URI"))
             self.db = self.client[os.getenv("MONGODB_DB")]
             self.result_collection = self.db["result"]
-            print("SummaryAgent: MongoDB连接成功")
+            print("SummaryAgent: MongoDB connection successful")
         except Exception as e:
-            print(f"SummaryAgent: MongoDB连接失败: {e}")
+            print(f"SummaryAgent: MongoDB connection failed: {e}")
             self.client = None
             self.db = None
             self.result_collection = None
@@ -92,13 +92,13 @@ All outputs must be in Chinese.
     
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        生成面试总结和最终决定
-        input_data包含:
-        - candidate_name: 候选人姓名
-        - resume_data: 简历信息
-        - qa_history: 完整的问答历史
-        - average_score: 平均分
-        - security_summary: 安全检测总结
+        Generate interview summary and final decision
+        input_data contains:
+        - candidate_name: Candidate name
+        - resume_data: Resume information
+        - qa_history: Complete Q&A history
+        - average_score: Average score
+        - security_summary: Security detection summary
         """
         try:
             candidate_name = input_data.get("candidate_name", "")

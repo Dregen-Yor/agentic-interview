@@ -7,7 +7,7 @@ import json
 from typing import Dict, Any, List
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from .base_agent import BaseAgent
-from .retrieval import RetrievalSystem, KnowledgeExtractor
+from .retrieval import RetrievalSystem
 from interview.tools.rag_tool import rag_search as rag_search_tool
 
 
@@ -74,23 +74,6 @@ All outputs must be in Chinese.
     def get_system_prompt(self) -> str:
         return self.system_prompt or self.base_system_prompt
     
-    def set_candidate_context(self, resume_data: Dict[str, Any]):
-        """Set candidate context and integrate resume information into the system prompt."""
-        position = KnowledgeExtractor.extract_position_from_resume(resume_data)
-        skills = KnowledgeExtractor.extract_skills_from_resume(resume_data)
-        experience_level = KnowledgeExtractor.extract_experience_level(resume_data)
-        
-        candidate_context = f"""
-Candidate Information:
-- Target Position: {position}
-- Skills: {', '.join(skills) if skills else 'Not specified'}
-- Experience Level: {experience_level}
-- Resume Details: {json.dumps(resume_data, ensure_ascii=False, indent=2)}
-
-Please generate suitable interview questions based on the candidate information above.
-"""
-        
-        self.system_prompt = self.base_system_prompt + candidate_context
     
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -110,9 +93,7 @@ Please generate suitable interview questions based on the candidate information 
             current_score = input_data.get("current_score", 0)
             target_type = input_data.get("target_type")
             
-            # If this is the first time generating a question, set the candidate context
-            if not previous_qa and resume_data:
-                self.set_candidate_context(resume_data)
+            
             
             # Build the prompt
             prompt_parts = []

@@ -2,7 +2,7 @@
 [project]
 name = "agentic-interview"                      # 项目名称
 version = "0.1.0"                               # 项目版本
-description = "AI驱动的智能面试平台"              # 项目描述
+description = "AI-powered interview platform"
 readme = "README.md"                            # 说明文档
 requires-python = ">=3.12"                     # Python版本要求
 
