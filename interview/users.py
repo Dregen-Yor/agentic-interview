@@ -109,22 +109,22 @@ def check_user(request):
 def verify_token(request):
     """Verifies a JWT token from the Authorization header."""
     if request.method != 'POST':
-        # 通常验证请求使用 POST 或 GET，这里为保持一致性使用 POST
+        # Verification endpoints typically use POST or GET; we keep POST for consistency
         return JsonResponse({'error': 'Only POST method is allowed'}, status=405)
 
     try:
-        # 从请求头中获取 token
+        # Retrieve the token from the request header
         auth_header = request.headers.get('Authorization')
         if not auth_header or not auth_header.startswith('Bearer '):
             return JsonResponse({'error': 'Authorization header missing or invalid'}, status=401)
-        
+
         token = auth_header.split(' ')[1]
 
-        # 解码并验证 token
-        # jwt.decode 会自动检查是否过期，如果过期会抛出 ExpiredSignatureError
+        # Decode and validate the token
+        # jwt.decode automatically checks for expiration and raises ExpiredSignatureError if expired
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
 
-        # 如果需要，可以进一步验证 payload 中的用户是否存在于数据库
+        # Optionally verify that the user in the payload exists in the database
         
         return JsonResponse({'message': 'Token is valid', 'user_id': payload['user_id']}, status=200)
 
