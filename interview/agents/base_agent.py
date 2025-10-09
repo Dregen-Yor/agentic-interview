@@ -44,7 +44,7 @@ class BaseAgent(ABC):
 
 
 class InterviewState:
-    """面试状态管理类"""
+    """interview state"""
     
     def __init__(self, candidate_name: str, resume_data: Dict[str, Any] = None):
         self.candidate_name = candidate_name
@@ -60,7 +60,7 @@ class InterviewState:
         self.security_alerts = []
         
     def add_qa_pair(self, question: str, answer: str, score: int = 0):
-        """添加问答对"""
+        """add qa pair"""
         self.questions_asked.append(question)
         self.answers_given.append(answer)
         if score > 0:
@@ -68,7 +68,7 @@ class InterviewState:
         self.total_questions += 1
     
     def get_current_context(self) -> Dict[str, Any]:
-        """获取当前面试上下文"""
+        """get current interview context"""
         return {
             "candidate_name": self.candidate_name,
             "resume_data": self.resume_data,
@@ -81,7 +81,7 @@ class InterviewState:
         }
     
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典格式"""
+        """convert to dict"""
         return {
             "candidate_name": self.candidate_name,
             "resume_data": self.resume_data,

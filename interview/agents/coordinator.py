@@ -1,6 +1,6 @@
 """
-多智能体协调器
-协调各个智能体的工作流程，管理面试的整个生命周期
+Multi-Agent Coordinator
+Coordinates the workflow of various agents and manages the entire lifecycle of interviews
 """
 
 from typing import Dict, Any, List, Optional
@@ -17,26 +17,26 @@ from .summary_agent import SummaryAgent
 
 
 class MultiAgentCoordinator:
-    """多智能体协调器"""
-    
+    """Multi-Agent Coordinator"""
+
     def __init__(self, models: Dict[str, Any]):
         """
-        初始化协调器
-        models: 包含不同模型配置的字典
+        Initialize the coordinator
+        models: Dictionary containing different model configurations
         """
-        # 初始化各个组件
+        # Initialize components
         self.retrieval_system = RetrievalSystem()
         self.memory_manager = MemoryManager()
-        
-        # 初始化各个智能体
+
+        # Initialize agents
         self.question_generator = QuestionGeneratorAgent(
             models.get("question_model"), self.retrieval_system
         )
         self.scoring_agent = ScoringAgent(models.get("scoring_model"))
         self.security_agent = SecurityAgent(models.get("security_model"))
         self.summary_agent = SummaryAgent(models.get("summary_model"))
-        
-        # 面试会话管理
+
+        # Interview session management
         self.active_sessions = {}  # session_id -> InterviewSession
     
     def start_interview(self, session_id: str, candidate_name: str) -> Dict[str, Any]:
