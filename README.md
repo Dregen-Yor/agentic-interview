@@ -2,10 +2,12 @@
 
 一个多智能体面试平台，在泰山学堂2025年新生中进行测试，具有较高的可扩展性。
 
-![Introduciton](asserts/Intro.png)
-## 框架
+<img src="asserts/Intro.png" alt="Introduciton" width="800">
 
-![Introduciton](asserts/framework.png)
+## 框架
+<img src="asserts/framework.png" alt="Introduciton" width="800">
+
+
 ## 🚀 快速开始
 
 ### 环境要求
