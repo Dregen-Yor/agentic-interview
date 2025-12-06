@@ -190,10 +190,10 @@ class MemoryManager:
 
             success = storage_interface.save_memory(memory_data)
             if success:
-                self.logger.info("memory saved to storage: {session_id}")
+                self.logger.info(f"memory saved to storage: {session_id}")
             return success
         except Exception as e:
-            self.logger.error("error saving memory: {e}")
+            self.logger.error(f"error saving memory: {e}")
             return False
 
     def load_memory_from_storage(self, session_id: str, storage_interface) -> Optional[InterviewMemory]:
@@ -205,10 +205,10 @@ class MemoryManager:
 
             memory = InterviewMemory.from_dict(memory_data["memory_data"])
             self.memories[session_id] = memory
-            self.logger.info("memory loaded from storage: {session_id}")
+            self.logger.info(f"memory loaded from storage: {session_id}")
             return memory
         except Exception as e:
-            self.logger.error("error: {e}")
+            self.logger.error(f"error: {e}")
             return None
 
     def save_all_memories_to_storage(self, storage_interface) -> Dict[str, bool]:

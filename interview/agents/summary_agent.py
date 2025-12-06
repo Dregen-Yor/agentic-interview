@@ -143,7 +143,7 @@ All outputs must be in Chinese.
                 return result
                 
             except (json.JSONDecodeError, ValueError) as e:
-                self.logger.error("Failed to parse JSON response from SummaryAgent: {e}")
+                self.logger.error(f"Failed to parse JSON response from SummaryAgent: {e}")
                 
                 # 生成备用总结
                 fallback_result = self._generate_fallback_summary(
@@ -154,7 +154,7 @@ All outputs must be in Chinese.
                 return fallback_result
                 
         except Exception as e:
-            self.logger.error("Error in SummaryAgent: {e}")
+            self.logger.error(f"Error in SummaryAgent: {e}")
             error_result = self._generate_error_summary(candidate_name, average_score)
 
             # 注意：不在这里保存，由协调器统一保存
@@ -376,7 +376,7 @@ All outputs must be in Chinese.
         """
         if self.result_collection is None:
             error_msg = "数据库连接未建立，无法保存面试结果"
-            self.logger.error("Error: {error_msg}")
+            self.logger.error(f"Error: {error_msg}")
             return error_msg
 
         try:
@@ -398,13 +398,13 @@ All outputs must be in Chinese.
             }
 
             result_insert = self.result_collection.insert_one(interview_record)
-            self.logger.info("完整面试总结已保存到数据库，记录ID: {result_insert.inserted_id}")
+            self.logger.info(f"完整面试总结已保存到数据库，记录ID: {result_insert.inserted_id}")
 
             return f"面试总结已成功记录到数据库。记录ID: {result_insert.inserted_id}"
 
         except Exception as e:
             error_msg = f"保存完整面试总结时发生错误: {str(e)}"
-            self.logger.error("Error: {error_msg}")
+            self.logger.error(f"Error: {error_msg}")
             return error_msg
 
     def _fix_common_json_issues(self, response: str) -> str:

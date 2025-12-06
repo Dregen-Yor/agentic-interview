@@ -10,7 +10,7 @@ import logging
 
 from .base_agent import BaseAgent, InterviewState
 from .memory import MemoryManager, InterviewMemory
-from .retrieval import RetrievalSystem
+from interview.tools.rag_tools import RetrievalSystem
 from .question_generator import QuestionGeneratorAgent
 from .scoring_agent import ScoringAgent
 from .security_agent import SecurityAgent

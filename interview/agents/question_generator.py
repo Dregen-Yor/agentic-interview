@@ -8,8 +8,7 @@ import logging
 from typing import Dict, Any, List
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from .base_agent import BaseAgent
-from .retrieval import RetrievalSystem
-from interview.tools.rag_tool import rag_search as rag_search_tool
+from interview.tools.rag_tools import RetrievalSystem, rag_search as rag_search_tool
 
 
 class QuestionGeneratorAgent(BaseAgent):
@@ -191,8 +190,8 @@ All outputs must be in Chinese.
                     raise ValueError("Response missing 'question' field")
                 return result
             except (json.JSONDecodeError, ValueError) as e:
-                self.logger.error("Failed to parse JSON response: {e}")
-                self.logger.debug("Raw response: {response}")
+                self.logger.error(f"Failed to parse JSON response: {e}")
+                self.logger.debug(f"Raw response: {response}")
 
                 # 如果JSON解析失败，直接返回原始字符串
                 question_text = self._extract_question_from_raw_response(response)
@@ -204,7 +203,7 @@ All outputs must be in Chinese.
                 }
                 
         except Exception as e:
-            self.logger.error("Error in QuestionGeneratorAgent: {e}")
+            self.logger.error(f"Error in QuestionGeneratorAgent: {e}")
             return {
                 "question": "An error occurred while generating the question. Please introduce your work experience and skills background.",
                 "type": "general",
@@ -254,7 +253,7 @@ All outputs must be in Chinese.
                 if iterations >= max_iterations:
                     return ai_msg.content if getattr(ai_msg, 'content', None) else "工具调用次数过多，已返回当前结果"
         except Exception as e:
-            self.logger.warning("Failed to invoke with tools, falling back to text-only generation: {e}")
+            self.logger.warning(f"Failed to invoke with tools, falling back to text-only generation: {e}")
             return self._invoke_model(messages)
     
     def generate_initial_questions(self, resume_data: Dict[str, Any], count: int = 3) -> List[Dict[str, Any]]:

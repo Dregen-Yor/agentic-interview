@@ -140,8 +140,8 @@ Please provide a detailed scoring result according to the scoring criteria.
                 return result
                 
             except (json.JSONDecodeError, ValueError) as e:
-                self.logger.error("Failed to parse JSON response from ScoringAgent: {e}")
-                self.logger.debug("Raw response: {response}")
+                self.logger.error(f"Failed to parse JSON response from ScoringAgent: {e}")
+                self.logger.debug(f"Raw response: {response}")
                 
                 # 尝试从文本中提取分数
                 score = self._extract_score_from_text(response)
@@ -163,7 +163,7 @@ Please provide a detailed scoring result according to the scoring criteria.
                 }
                 
         except Exception as e:
-            self.logger.error("Error in ScoringAgent: {e}")
+            self.logger.error(f"Error in ScoringAgent: {e}")
             return {
                 "score": 5,
                 "letter": self._score_to_letter(5),

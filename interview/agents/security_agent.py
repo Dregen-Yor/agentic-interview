@@ -156,7 +156,7 @@ All outputs must be in Chinese.
                 return result
                 
             except (json.JSONDecodeError, ValueError) as e:
-                self.logger.error("Failed to parse JSON response from SecurityAgent: {e}")
+                self.logger.error(f"Failed to parse JSON response from SecurityAgent: {e}")
                 
                 # 分析文本响应
                 is_safe = "安全" in response or "safe" in response.lower()
@@ -171,7 +171,7 @@ All outputs must be in Chinese.
                 }
                 
         except Exception as e:
-            self.logger.error("Error in SecurityAgent: {e}")
+            self.logger.error(f"Error in SecurityAgent: {e}")
             return {
                 "is_safe": False,
                 "risk_level": "medium",

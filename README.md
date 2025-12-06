@@ -1,32 +1,11 @@
-# 🤖 AI智能面试系统
+# Agentic AI Interview 
 
-一个基于多智能体架构的智能面试平台，支持实时语音交互、智能题目生成、多维度评分和安全检测。
+一个多智能体面试平台，在泰山学堂2025年新生中进行测试，具有较高的可扩展性。
 
-## 🌟 特性概览
+![Introduciton](asserts/Intro.png)
+## 框架
 
-### 🧠 多智能体架构
-- **问题生成智能体** - 根据简历和表现动态生成个性化问题
-- **评分智能体** - 多维度评分（技术能力、沟通表达、经验匹配、创新思维）
-- **安全智能体** - 防止提示词注入和恶意输入
-- **总结智能体** - 生成详细面试报告和录用建议
-- **协调器** - 统一管理整个面试流程
-
-### 🎯 核心功能
-- 📝 **智能简历解析** - 自动提取技能、经验和职位信息
-- 🗣️ **实时语音面试** - WebSocket + TTS 语音合成
-- 📊 **多维度评估** - 技术、沟通、经验、创新四个维度
-- 🛡️ **安全防护** - 检测和阻止恶意输入和系统绕过
-- 📈 **智能分析** - 自动判断面试进程和完成时机
-- 📋 **详细报告** - 生成全面的面试总结和建议
-
-### 💻 技术栈
-- **后端**: Django + Django Channels + WebSocket
-- **前端**: Vue 3 + TypeScript + Element Plus
-- **AI**: LangChain + DeepSeek/Gemini LLM
-- **数据库**: SQLite (Django) + MongoDB (简历/向量数据)
-- **缓存**: Redis (WebSocket通信)
-- **向量搜索**: Ollama + 嵌入模型
-
+![Introduciton](asserts/framework.png)
 ## 🚀 快速开始
 
 ### 环境要求
@@ -35,7 +14,6 @@
 - Node.js 18+
 - Redis Server
 - MongoDB
-- Ollama
 
 ### 1. 克隆项目
 
@@ -50,10 +28,6 @@ cd agentic-interview
 ```bash
 # 使用 uv (推荐)
 uv sync
-
-# 或使用 pip
-pip install -r requirements.txt
-```
 
 #### 配置环境变量
 创建 `.env` 文件：
@@ -143,55 +117,6 @@ agentic-interview/
 └── README.md                 # 项目说明
 ```
 
-## 🔄 API 接口
-
-### HTTP API
-
-#### 启动面试
-```bash
-POST /api/
-Content-Type: application/json
-
-{
-  "candidate_name": "张三",
-  "message": ""
-}
-```
-
-#### 回答问题
-```bash
-POST /api/
-Content-Type: application/json
-
-{
-  "message": "我有5年的Python开发经验..."
-}
-```
-
-#### 查看面试状态
-```bash
-GET /api/interview/status/
-```
-
-#### 结束面试
-```bash
-POST /api/interview/end/
-```
-
-### WebSocket API
-
-连接面试WebSocket：
-```
-ws://localhost:8000/ws/interview/{chat_id}/
-```
-
-消息格式：
-```json
-{
-  "message": "用户回答",
-  "username": "候选人姓名"
-}
-```
 
 ## 🛠️ 开发指南
 
@@ -203,31 +128,6 @@ ws://localhost:8000/ws/interview/{chat_id}/
 4. **判断完成** → 评分智能体判断是否收集足够信息
 5. **生成总结** → 总结智能体分析整个面试过程并给出建议
 
-### 自定义智能体
-
-继承 `BaseAgent` 类创建新智能体：
-
-```python
-from interview.agents.base_agent import BaseAgent
-
-class CustomAgent(BaseAgent):
-    def get_system_prompt(self) -> str:
-        return "你的系统提示词"
-    
-    def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        # 你的处理逻辑
-        return {"result": "处理结果"}
-```
-
-### 扩展记忆系统
-
-```python
-from interview.agents.memory import InterviewMemory
-
-memory = InterviewMemory("候选人姓名")
-memory.add_question_answer("问题", "回答")
-memory.set_context("key", "value")
-```
 
 ## 🔒 安全特性
 
@@ -252,13 +152,9 @@ export DEBUG=False
 uv run python manage.py collectstatic
 ```
 
-3. **使用 Gunicorn + Daphne**
+3. **使用 Daphne 启动项目**
 ```bash
-# HTTP 服务
-gunicorn interview_backend.wsgi:application
-
-# WebSocket 服务  
-daphne interview_backend.asgi:application
+daphne -b 0.0.0.0 -p 8000 interview_backend.asgi:application
 ```
 
 ### Docker 部署
@@ -283,12 +179,6 @@ CMD ["uv", "run", "python", "manage.py", "runserver", "0.0.0.0:8000"]
 ## 📄 许可证
 
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
-
-## 🆘 支持与反馈
-
-- 🐛 **问题报告**: [GitHub Issues](../../issues)
-- 💡 **功能建议**: [GitHub Discussions](../../discussions)  
-- 📧 **联系我们**: your-email@example.com
 
 ## 🙏 致谢
 

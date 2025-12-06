@@ -130,7 +130,7 @@ def index(request):
             return JsonResponse({'error': 'Invalid JSON'}, status=400)
         except Exception as e:
             # 在生产环境中，应该使用更完善的日志记录
-            logger.error("An error occurred in index view: {e}")
+            logger.error(f"An error occurred in index view: {e}")
             return JsonResponse({'error': 'Internal server error'}, status=500)
 
     return JsonResponse({'error': 'Unsupported method'}, status=405)
@@ -161,7 +161,7 @@ def get_interview_status(request):
         })
         
     except Exception as e:
-        logger.error("Error getting interview status: {e}")
+        logger.error(f"Error getting interview status: {e}")
         return JsonResponse({'error': 'Failed to get interview status'}, status=500)
 
 
@@ -188,7 +188,7 @@ def end_interview(request):
         })
         
     except Exception as e:
-        logger.error("Error ending interview: {e}")
+        logger.error(f"Error ending interview: {e}")
         return JsonResponse({'error': 'Failed to end interview'}, status=500)
 
 
