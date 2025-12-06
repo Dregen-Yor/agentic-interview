@@ -1,16 +1,14 @@
-// 身份验证状态管理 - 使用Pinia
 import { defineStore } from 'pinia';
 import axios from 'axios';
 
 // 创建axios实例并配置基础设置
 const apiClient = axios.create({
-    baseURL: 'http://101.76.218.89:8000', // API基础URL
+    baseURL: 'http://101.76.218.89:8000',
     headers: {
         'Content-Type': 'application/json',
     }
 });
 
-// 添加请求拦截器，在每个请求中自动附加token
 apiClient.interceptors.request.use(config => {
     const token = localStorage.getItem('user-token');
     if (token) {
@@ -19,7 +17,6 @@ apiClient.interceptors.request.use(config => {
     return config;
 });
 
-// 定义身份验证状态管理store
 export const useAuth = defineStore('auth', {
     // 状态定义
     state: () => ({
@@ -90,8 +87,7 @@ export const useAuth = defineStore('auth', {
                 throw new Error('Authentication token not found.');
             }
             try {
-                const response = await apiClient.get('http://101.76.218.89:8000/api/result/');
-                // Return the data directly since backend now returns the result object directly
+                const response = await apiClient.get('/api/result/');
                 return { result: response.data };
             } catch (error: any) {
                 const message = error.response?.data?.error || error.message || 'Failed to fetch interview result';

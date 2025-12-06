@@ -19,8 +19,8 @@ class InterviewConsumer(AsyncWebsocketConsumer):
         
         # 初始化多智能体协调器
         models = {
-            "question_model": kimi_model,
-            "scoring_model": kimi_model,
+            "question_model": chatgpt_model,
+            "scoring_model": chatgpt_model,
             "security_model": gemini_model,  # 使用不同模型进行安全检测
             "summary_model": gemini_model
         }

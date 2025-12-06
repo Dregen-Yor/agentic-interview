@@ -33,7 +33,7 @@
         />
         <div class="status-text">请回答问题...</div>
         <div v-if="speechErrorText" class="error-text">{{ speechErrorText }}</div>
-        <textarea v-model="transcribedText" @keyup.enter="stopRecording" class="answer-textarea" placeholder="可以在此处手动输入回答，按Enter或点击“提交回答”发送..."></textarea>
+        <textarea v-model="transcribedText" class="answer-textarea" placeholder="可以在此处手动输入回答，按Enter换行或点击“提交回答”发送..."></textarea>
       </div>
 
       <!-- 完成动画 -->

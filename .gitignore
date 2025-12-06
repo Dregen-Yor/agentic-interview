@@ -29,5 +29,5 @@ coverage
 *.njsproj
 *.sln
 *.sw?
-
+*.csv
 *.tsbuildinfo

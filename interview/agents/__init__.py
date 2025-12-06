@@ -4,7 +4,7 @@
 
 from .base_agent import BaseAgent, InterviewState
 from .memory import InterviewMemory, MemoryManager
-from .retrieval import RetrievalSystem, KnowledgeExtractor
+from .retrieval import RetrievalSystem
 from .question_generator import QuestionGeneratorAgent
 from .scoring_agent import ScoringAgent
 from .security_agent import SecurityAgent
@@ -17,7 +17,6 @@ __all__ = [
     'InterviewMemory',
     'MemoryManager',
     'RetrievalSystem',
-    'KnowledgeExtractor',
     'QuestionGeneratorAgent',
     'ScoringAgent',
     'SecurityAgent',

@@ -93,6 +93,7 @@ All outputs must be in Chinese.
             current_score = input_data.get("current_score", 0)
             target_type = input_data.get("target_type")
             
+            skills = ""
             
             
             # Build the prompt
@@ -104,9 +105,6 @@ All outputs must be in Chinese.
                     "This is the opening stage of the interview (5-6 rounds in total): Please generate an efficient opening question that can both understand the background and reflect the foundation of mathematical logic. The question should be friendly but have a certain degree of differentiation to quickly understand the candidate's thinking ability."
                 )
             elif interview_stage == "technical":
-                # 技术阶段在本场景下以数理逻辑为主；若候选人自述技能，则定向深挖该方向
-                skills = KnowledgeExtractor.extract_skills_from_resume(resume_data)
-                position = KnowledgeExtractor.extract_position_from_resume(resume_data)
                 # 确定目标题型（若未显式指定，则基于场景选择）
                 desired_type = target_type
                 if not desired_type:
