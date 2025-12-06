@@ -7,6 +7,7 @@ import json
 import os
 import datetime
 import pymongo
+import logging
 from typing import Dict, Any, List
 from datetime import datetime
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -18,15 +19,16 @@ class SummaryAgent(BaseAgent):
 
     def __init__(self, model):
         super().__init__(model, "SummaryAgent")
+        self.logger = logging.getLogger("interview.agents.summary_agent")
 
         # MongoDB connection initialization
         try:
             self.client = pymongo.MongoClient(os.getenv("MONGODB_URI"))
             self.db = self.client[os.getenv("MONGODB_DB")]
             self.result_collection = self.db["result"]
-            print("SummaryAgent: MongoDB connection successful")
+            self.logger.info("SummaryAgent: MongoDB connection successful")
         except Exception as e:
-            print(f"SummaryAgent: MongoDB connection failed: {e}")
+            self.logger.error(f"SummaryAgent: MongoDB connection failed: {e}")
             self.client = None
             self.db = None
             self.result_collection = None
@@ -120,9 +122,9 @@ All outputs must be in Chinese.
             response = self._invoke_model(messages)
             
             # 输出原始响应内容
-            print(f"===== SummaryAgent 原始响应 =====")
-            print(response)
-            print("=================================\n")
+            self.logger.debug("===== SummaryAgent 原始响应 =====")
+            self.logger.debug(response)
+            self.logger.debug("=================================\n")
             
             try:
                 # 首先尝试修复常见的JSON问题
@@ -141,7 +143,7 @@ All outputs must be in Chinese.
                 return result
                 
             except (json.JSONDecodeError, ValueError) as e:
-                print(f"Failed to parse JSON response from SummaryAgent: {e}")
+                self.logger.error("Failed to parse JSON response from SummaryAgent: {e}")
                 
                 # 生成备用总结
                 fallback_result = self._generate_fallback_summary(
@@ -152,7 +154,7 @@ All outputs must be in Chinese.
                 return fallback_result
                 
         except Exception as e:
-            print(f"Error in SummaryAgent: {e}")
+            self.logger.error("Error in SummaryAgent: {e}")
             error_result = self._generate_error_summary(candidate_name, average_score)
 
             # 注意：不在这里保存，由协调器统一保存
@@ -374,7 +376,7 @@ All outputs must be in Chinese.
         """
         if self.result_collection is None:
             error_msg = "数据库连接未建立，无法保存面试结果"
-            print(f"Error: {error_msg}")
+            self.logger.error("Error: {error_msg}")
             return error_msg
 
         try:
@@ -396,13 +398,13 @@ All outputs must be in Chinese.
             }
 
             result_insert = self.result_collection.insert_one(interview_record)
-            print(f"完整面试总结已保存到数据库，记录ID: {result_insert.inserted_id}")
+            self.logger.info("完整面试总结已保存到数据库，记录ID: {result_insert.inserted_id}")
 
             return f"面试总结已成功记录到数据库。记录ID: {result_insert.inserted_id}"
 
         except Exception as e:
             error_msg = f"保存完整面试总结时发生错误: {str(e)}"
-            print(f"Error: {error_msg}")
+            self.logger.error("Error: {error_msg}")
             return error_msg
 
     def _fix_common_json_issues(self, response: str) -> str:

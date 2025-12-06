@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
+import logging
 
 
 class BaseAgent(ABC):
@@ -16,6 +17,7 @@ class BaseAgent(ABC):
         self.model = model
         self.name = name
         self.system_prompt = ""
+        self.logger = logging.getLogger(f"interview.agents.{name}")
 
     @abstractmethod
     def get_system_prompt(self) -> str:
@@ -30,12 +32,12 @@ class BaseAgent(ABC):
     def _invoke_model(self, messages: List[BaseMessage]) -> str:
         """Invoke LLM model"""
         try:
-            print(f"===== {self.name} starting LLM invocation =====")
+            self.logger.debug(f"===== {self.name} starting LLM invocation =====")
             response = self.model.invoke(messages)
-            print(f"===== {self.name} LLM invocation completed =====")
+            self.logger.debug(f"===== {self.name} LLM invocation completed =====")
             return response.content
         except Exception as e:
-            print(f"Error invoking model in {self.name}: {e}")
+            self.logger.error(f"Error invoking model in {self.name}: {e}")
             return f"Error: {str(e)}"
 
     def set_system_prompt(self, prompt: str):

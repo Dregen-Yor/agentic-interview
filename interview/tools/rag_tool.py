@@ -4,6 +4,7 @@ RAG 向量检索工具
 """
 
 import os
+import logging
 from typing import List, Optional
 
 import pymongo
@@ -14,6 +15,9 @@ from langchain.tools import tool
 # 加载环境变量
 load_dotenv()
 
+# 初始化logger
+logger = logging.getLogger("interview.tools.rag")
+
 
 def _get_mongo_collections():
     """获取 MongoDB 连接与集合句柄"""
@@ -23,15 +27,11 @@ def _get_mongo_collections():
 
 
 def _get_embedding(text: str) -> Optional[List[float]]:
-    """
-    复用项目中的 embedding 生成逻辑。
-    注意：依赖 `init.get_embedding`，保持向量维度与索引一致。
-    """
     try:
-        from init import get_embedding  # 延迟导入以避免循环依赖
+        from init import get_embedding 
         return get_embedding(text)
     except Exception as e:
-        print(f"Embedding 生成失败: {e}")
+        logger.error("Embedding 生成失败: {e}")
         return None
 
 
@@ -42,7 +42,7 @@ def rag_search(query: str) -> str:
     知识库中包含编程问题、概念和最佳实践。
     当你需要回答技术问题、评估候选人的技术知识或提供编程示例时，请使用此工具。
     """
-    print(f"--- TOOL CALLED: rag_search with query='{query}' ---")
+    logger.debug("--- TOOL CALLED: rag_search with query='{query}' ---")
 
     query_embedding = _get_embedding(query)
     if not query_embedding:

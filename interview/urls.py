@@ -24,7 +24,4 @@ urlpatterns = [
     path('resume/update/', users.update_user_resume, name='update_user_resume'),
 
     path('result/', users.get_interview_result, name='get_interview_result'),
-
-    # 已废弃但保留的端点
-    path('face2faceChat/', views.face2face_chat, name='face2face_chat'),
 ] 

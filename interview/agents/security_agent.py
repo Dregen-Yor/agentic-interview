@@ -5,6 +5,7 @@
 
 import json
 import re
+import logging
 from typing import Dict, Any, List
 from langchain_core.messages import SystemMessage, HumanMessage
 from .base_agent import BaseAgent
@@ -15,6 +16,7 @@ class SecurityAgent(BaseAgent):
     
     def __init__(self, model):
         super().__init__(model, "SecurityAgent")
+        self.logger = logging.getLogger("interview.agents.security_agent")
         self.system_prompt = """
 You are a security detection expert for a university freshman interview scenario. You need to identify potentially inappropriate or out-of-bounds content during the interview process, while avoiding misjudging reasonable mathematical discussions as risks.
 
@@ -133,9 +135,9 @@ All outputs must be in Chinese.
             response = self._invoke_model(messages)
             
             # 输出原始响应内容
-            print(f"===== SecurityAgent 原始响应 =====")
-            print(response)
-            print("==================================\n")
+            self.logger.debug("===== SecurityAgent 原始响应 =====")
+            self.logger.debug(response)
+            self.logger.debug("==================================\n")
             
             try:
                 # 首先尝试修复常见的JSON问题
@@ -154,7 +156,7 @@ All outputs must be in Chinese.
                 return result
                 
             except (json.JSONDecodeError, ValueError) as e:
-                print(f"Failed to parse JSON response from SecurityAgent: {e}")
+                self.logger.error("Failed to parse JSON response from SecurityAgent: {e}")
                 
                 # 分析文本响应
                 is_safe = "安全" in response or "safe" in response.lower()
@@ -169,7 +171,7 @@ All outputs must be in Chinese.
                 }
                 
         except Exception as e:
-            print(f"Error in SecurityAgent: {e}")
+            self.logger.error("Error in SecurityAgent: {e}")
             return {
                 "is_safe": False,
                 "risk_level": "medium",

@@ -4,6 +4,7 @@
 """
 
 import json
+import logging
 from typing import Dict, Any, List
 from langchain_core.messages import SystemMessage, HumanMessage
 from .base_agent import BaseAgent
@@ -14,6 +15,7 @@ class ScoringAgent(BaseAgent):
     
     def __init__(self, model):
         super().__init__(model, "ScoringAgent")
+        self.logger = logging.getLogger("interview.agents.scoring_agent")
         self.system_prompt = """
 You are a scoring expert for interviews at a university's advanced computer science class (research track). The interviewees are first-year university students. You need to focus on assessing their mathematical and logical foundations, while also considering basic qualities and social skills.
 
@@ -83,7 +85,7 @@ All outputs must be in Chinese.
         - difficulty: 问题难度
         - resume_data: 简历信息（不参与评分，仅为兼容字段，将被忽略）
         """
-        print(f"===== ScoringAgent.process() 开始执行 =====")
+        self.logger.debug("===== ScoringAgent.process() 开始执行 =====")
         try:
             question = input_data.get("question", "")
             answer = input_data.get("answer", "")
@@ -114,9 +116,9 @@ Please provide a detailed scoring result according to the scoring criteria.
             response = self._invoke_model(messages)
             
             # 输出原始响应内容
-            print(f"===== ScoringAgent 原始响应 =====")
-            print(response)
-            print("=================================\n")
+            self.logger.debug("===== ScoringAgent 原始响应 =====")
+            self.logger.debug(response)
+            self.logger.debug("=================================\n")
             
             # 尝试解析JSON响应
             try:
@@ -138,8 +140,8 @@ Please provide a detailed scoring result according to the scoring criteria.
                 return result
                 
             except (json.JSONDecodeError, ValueError) as e:
-                print(f"Failed to parse JSON response from ScoringAgent: {e}")
-                print(f"Raw response: {response}")
+                self.logger.error("Failed to parse JSON response from ScoringAgent: {e}")
+                self.logger.debug("Raw response: {response}")
                 
                 # 尝试从文本中提取分数
                 score = self._extract_score_from_text(response)
@@ -161,7 +163,7 @@ Please provide a detailed scoring result according to the scoring criteria.
                 }
                 
         except Exception as e:
-            print(f"Error in ScoringAgent: {e}")
+            self.logger.error("Error in ScoringAgent: {e}")
             return {
                 "score": 5,
                 "letter": self._score_to_letter(5),

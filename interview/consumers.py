@@ -2,9 +2,13 @@ import json
 import asyncio
 import httpx
 import base64
+import logging
 from channels.generic.websocket import AsyncWebsocketConsumer
 from .agents import MultiAgentCoordinator
 from .llm import chatgpt_model, gemini_model, kimi_model, qwen_model
+
+# 初始化logger
+logger = logging.getLogger("interview.consumers")
 
 class InterviewConsumer(AsyncWebsocketConsumer):
     """
@@ -30,7 +34,7 @@ class InterviewConsumer(AsyncWebsocketConsumer):
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
         
-        print(f"WebSocket连接已建立: {self.chat_id}")
+        logger.info("WebSocket连接已建立: {self.chat_id}")
 
     async def disconnect(self, close_code):
         # 清理面试会话
@@ -40,7 +44,7 @@ class InterviewConsumer(AsyncWebsocketConsumer):
         # 离开 Channel Layer 组
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
         
-        print(f"WebSocket连接已断开: {self.chat_id}")
+        logger.info("WebSocket连接已断开: {self.chat_id}")
 
     async def receive(self, text_data):
         """
@@ -69,7 +73,7 @@ class InterviewConsumer(AsyncWebsocketConsumer):
                 'error': 'JSON解析失败，返回原始字符串'
             }))
         except Exception as e:
-            print(f"接收消息时发生错误: {e}")
+            logger.error("接收消息时发生错误: {e}")
             await self.send_error("处理消息时发生错误")
 
     async def start_interview(self, candidate_name: str):
@@ -98,7 +102,7 @@ class InterviewConsumer(AsyncWebsocketConsumer):
                 await self.send_error(result["message"])
                 
         except Exception as e:
-            print(f"启动面试时发生错误: {e}")
+            logger.error("启动面试时发生错误: {e}")
             await self.send_error("启动面试时发生系统错误")
     
     async def process_user_answer(self, user_answer: str):
@@ -134,7 +138,7 @@ class InterviewConsumer(AsyncWebsocketConsumer):
                             'violation_details': result.get("violation_details", {})
                         }
                         
-                        print(f"🚨 发送安全终止消息: {message}")
+                        logger.warning("🚨 发送安全终止消息: {message}")
                         await self.send(text_data=json.dumps(message))
                         
                         # 延迟关闭连接
@@ -202,7 +206,7 @@ class InterviewConsumer(AsyncWebsocketConsumer):
                     await self.send_error(result["message"])
                     
         except Exception as e:
-            print(f"处理用户回答时发生错误: {e}")
+            logger.error("处理用户回答时发生错误: {e}")
             await self.send_error("处理回答时发生系统错误")
     
     async def generate_tts_audio(self, text: str) -> str:
@@ -219,10 +223,10 @@ class InterviewConsumer(AsyncWebsocketConsumer):
                     audio_content = tts_response.content
                     return base64.b64encode(audio_content).decode('utf-8')
                 else:
-                    print(f"TTS API错误: Status {tts_response.status_code}")
+                    logger.error("TTS API错误: Status {tts_response.status_code}")
                     return None
         except Exception as e:
-            print(f"TTS生成异常: {e}")
+            logger.error("TTS生成异常: {e}")
             return None
     
     async def send_error(self, error_message: str):

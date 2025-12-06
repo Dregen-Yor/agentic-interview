@@ -6,6 +6,7 @@ Provides structured interview memory storage and retrieval functionality
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import json
+import logging
 
 
 class InterviewMemory:
@@ -17,6 +18,7 @@ class InterviewMemory:
         self.score_history = []  # Score history
         self.context_memory = {}  # Context memory
         self.created_at = datetime.now()
+        self.logger = logging.getLogger("interview.agents.memory")
         
     def add_question_answer(self, question: str, answer: str, timestamp: datetime = None, question_data: Dict[str, Any] = None):
         """Add Q&A pair, now supports storing complete question JSON object"""
@@ -188,10 +190,10 @@ class MemoryManager:
 
             success = storage_interface.save_memory(memory_data)
             if success:
-                print(f"memory saved to storage: {session_id}")
+                self.logger.info("memory saved to storage: {session_id}")
             return success
         except Exception as e:
-            print(f"error saving memory: {e}")
+            self.logger.error("error saving memory: {e}")
             return False
 
     def load_memory_from_storage(self, session_id: str, storage_interface) -> Optional[InterviewMemory]:
@@ -203,10 +205,10 @@ class MemoryManager:
 
             memory = InterviewMemory.from_dict(memory_data["memory_data"])
             self.memories[session_id] = memory
-            print(f"memory loaded from storage: {session_id}")
+            self.logger.info("memory loaded from storage: {session_id}")
             return memory
         except Exception as e:
-            print(f"error: {e}")
+            self.logger.error("error: {e}")
             return None
 
     def save_all_memories_to_storage(self, storage_interface) -> Dict[str, bool]:

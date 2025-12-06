@@ -4,6 +4,7 @@
 """
 
 import json
+import logging
 from typing import Dict, Any, List
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from .base_agent import BaseAgent
@@ -17,6 +18,7 @@ class QuestionGeneratorAgent(BaseAgent):
     def __init__(self, model, retrieval_system: RetrievalSystem):
         super().__init__(model, "QuestionGenerator")
         self.retrieval_system = retrieval_system
+        self.logger = logging.getLogger("interview.agents.question_generator")
         self.base_system_prompt = """
 You are an interviewer for a university's advanced computer science class (research track). The interviewees are first-year university students, whose overall computer knowledge may be limited. The difficulty should not exceed high school level, unless the candidate mentions they know more.
 The interview will be controlled within 5-6 rounds of efficient Q&A, and a comprehensive assessment of the candidate needs to be completed within these limited rounds.
@@ -85,15 +87,13 @@ All outputs must be in Chinese.
         - current_score: 当前评分情况
         - target_type: 目标题目类型（math_logic/technical/behavioral/experience），可选
         """
-        print(f"===== QuestionGenerator.process() 开始执行 =====")
+        self.logger.debug("===== QuestionGenerator.process() 开始执行 =====")
         try:
             resume_data = input_data.get("resume_data", {})
             interview_stage = input_data.get("interview_stage", "technical")
             previous_qa = input_data.get("previous_qa", [])
             current_score = input_data.get("current_score", 0)
             target_type = input_data.get("target_type")
-            
-            skills = ""
             
             
             # Build the prompt
@@ -106,12 +106,7 @@ All outputs must be in Chinese.
                 )
             elif interview_stage == "technical":
                 # 确定目标题型（若未显式指定，则基于场景选择）
-                desired_type = target_type
-                if not desired_type:
-                    if skills:
-                        desired_type = "technical"
-                    else:
-                        desired_type = "math_logic"
+                desired_type = target_type or "math_logic"
 
                 if desired_type == "math_logic":
                     # For math_logic, forcibly use the RAG tool to enrich the question material
@@ -183,9 +178,9 @@ All outputs must be in Chinese.
             response = self._invoke_with_tools(messages)
             
             # 输出原始响应内容
-            print(f"===== QuestionGenerator 原始响应 =====")
-            print(response)
-            print("=====================================\n")
+            self.logger.debug("===== QuestionGenerator 原始响应 =====")
+            self.logger.debug(response)
+            self.logger.debug("=====================================\n")
             
             # 尝试解析JSON响应
             try:
@@ -196,8 +191,8 @@ All outputs must be in Chinese.
                     raise ValueError("Response missing 'question' field")
                 return result
             except (json.JSONDecodeError, ValueError) as e:
-                print(f"Failed to parse JSON response: {e}")
-                print(f"Raw response: {response}")
+                self.logger.error("Failed to parse JSON response: {e}")
+                self.logger.debug("Raw response: {response}")
 
                 # 如果JSON解析失败，直接返回原始字符串
                 question_text = self._extract_question_from_raw_response(response)
@@ -209,7 +204,7 @@ All outputs must be in Chinese.
                 }
                 
         except Exception as e:
-            print(f"Error in QuestionGeneratorAgent: {e}")
+            self.logger.error("Error in QuestionGeneratorAgent: {e}")
             return {
                 "question": "An error occurred while generating the question. Please introduce your work experience and skills background.",
                 "type": "general",
@@ -229,9 +224,9 @@ All outputs must be in Chinese.
             max_iterations = 4
             iterations = 0
             while True:
-                print(f"===== {self.name} 开始调用LLM（tools-enabled） =====")
+                self.logger.debug(f"===== {self.name} 开始调用LLM（tools-enabled） =====")
                 ai_msg = model_with_tools.invoke(history)
-                print(f"===== {self.name} LLM调用完成 =====")
+                self.logger.debug(f"===== {self.name} LLM调用完成 =====")
 
                 # 若模型直接给出答案
                 tool_calls = getattr(ai_msg, "tool_calls", None)
@@ -259,7 +254,7 @@ All outputs must be in Chinese.
                 if iterations >= max_iterations:
                     return ai_msg.content if getattr(ai_msg, 'content', None) else "工具调用次数过多，已返回当前结果"
         except Exception as e:
-            print(f"Failed to invoke with tools, falling back to text-only generation: {e}")
+            self.logger.warning("Failed to invoke with tools, falling back to text-only generation: {e}")
             return self._invoke_model(messages)
     
     def generate_initial_questions(self, resume_data: Dict[str, Any], count: int = 3) -> List[Dict[str, Any]]:

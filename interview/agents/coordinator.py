@@ -6,6 +6,7 @@ Coordinates the workflow of various agents and manages the entire lifecycle of i
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import asyncio
+import logging
 
 from .base_agent import BaseAgent, InterviewState
 from .memory import MemoryManager, InterviewMemory
@@ -24,6 +25,9 @@ class MultiAgentCoordinator:
         Initialize the coordinator
         models: Dictionary containing different model configurations
         """
+        # Initialize logger
+        self.logger = logging.getLogger("interview.agents.coordinator")
+
         # Initialize components
         self.retrieval_system = RetrievalSystem()
         self.memory_manager = MemoryManager()
@@ -42,7 +46,7 @@ class MultiAgentCoordinator:
     def start_interview(self, session_id: str, candidate_name: str) -> Dict[str, Any]:
         """开始面试"""
         try:
-            print(f"开始面试会话: {session_id}, 候选人: {candidate_name}")
+            self.logger.debug(f"开始面试会话: {session_id}, 候选人: {candidate_name}")
             
             # 获取候选人简历
             resume_data = self.retrieval_system.get_resume_by_name(candidate_name)
@@ -92,7 +96,7 @@ class MultiAgentCoordinator:
             }
             
         except Exception as e:
-            print(f"启动面试时发生错误: {e}")
+            self.logger.error(f"启动面试时发生错误: {e}")
             return {
                 "success": False,
                 "error": str(e),
@@ -128,20 +132,20 @@ class MultiAgentCoordinator:
                 }
             })
             
-            # 打印安全检查结果用于调试
-            print(f"===== 安全检查结果 =====")
-            print(f"风险等级: {security_check.get('risk_level', 'unknown')}")
-            print(f"建议操作: {security_check.get('suggested_action', 'unknown')}")
-            print(f"是否安全: {security_check.get('is_safe', True)}")
-            print(f"检测问题: {security_check.get('detected_issues', [])}")
-            print("========================")
+            # 记录安全检查结果用于调试
+            self.logger.debug("===== 安全检查结果 =====")
+            self.logger.debug(f"风险等级: {security_check.get('risk_level', 'unknown')}")
+            self.logger.debug(f"建议操作: {security_check.get('suggested_action', 'unknown')}")
+            self.logger.debug(f"是否安全: {security_check.get('is_safe', True)}")
+            self.logger.debug(f"检测问题: {security_check.get('detected_issues', [])}")
+            self.logger.debug("========================")
             
             # 如果检测到高风险或建议阻止，直接结束面试
             if (security_check.get("risk_level") == "high" or 
                 security_check.get("suggested_action") == "block" or 
                 security_check.get("is_safe") == False):
                 
-                print(f"⚠️ 安全警报：检测到恶意输入，直接终止面试")
+                self.logger.warning(f"⚠️ 安全警报：检测到恶意输入，直接终止面试")
                 
                 # 记录这次恶意输入到问答历史 - 包含完整的问题JSON对象
                 malicious_qa = {
@@ -250,7 +254,7 @@ class MultiAgentCoordinator:
             }
             
         except Exception as e:
-            print(f"处理回答时发生错误: {e}")
+            self.logger.error(f"处理回答时发生错误: {e}")
             return {
                 "success": False,
                 "error": str(e),
@@ -269,7 +273,7 @@ class MultiAgentCoordinator:
                     "error": "Session or memory not found"
                 }
             
-            print(f"🚨 执行安全终止面试流程: {session_id}")
+            self.logger.warning(f"🚨 执行安全终止面试流程: {session_id}")
             
             # 生成安全总结（包含此次违规）
             security_summary = self.security_agent.analyze_session_security(session.qa_history)
@@ -358,7 +362,7 @@ class MultiAgentCoordinator:
             )
 
             if not memory_save_success:
-                print(f"警告: 面试记忆保存失败: {session_id}")
+                self.logger.warning(f"警告: 面试记忆保存失败: {session_id}")
             
             # 清理会话
             self.cleanup_session(session_id)
@@ -381,7 +385,7 @@ class MultiAgentCoordinator:
             }
             
         except Exception as e:
-            print(f"安全终止面试时发生错误: {e}")
+            self.logger.error(f"安全终止面试时发生错误: {e}")
             return {
                 "success": False,
                 "error": str(e),
@@ -479,7 +483,7 @@ class MultiAgentCoordinator:
             }
             
         except Exception as e:
-            print(f"结束面试时发生错误: {e}")
+            self.logger.error(f"结束面试时发生错误: {e}")
             return {
                 "success": False,
                 "error": str(e),
@@ -509,7 +513,7 @@ class MultiAgentCoordinator:
             del self.active_sessions[session_id]
         
         self.memory_manager.remove_memory(session_id)
-        print(f"已清理会话: {session_id}")
+        self.logger.info(f"已清理会话: {session_id}")
     
     def cleanup_all_sessions(self):
         """清理所有会话"""
@@ -594,7 +598,7 @@ class MultiAgentCoordinator:
             }
 
         except Exception as e:
-            print(f"恢复面试会话时发生错误: {e}")
+            self.logger.error(f"恢复面试会话时发生错误: {e}")
             return {
                 "success": False,
                 "error": str(e),
@@ -625,7 +629,7 @@ class MultiAgentCoordinator:
             return memory_summaries
 
         except Exception as e:
-            print(f"获取候选人记忆历史时发生错误: {e}")
+            self.logger.error(f"获取候选人记忆历史时发生错误: {e}")
             return []
 
     def export_memory_to_file(self, session_id: str, file_path: str = None) -> Dict[str, Any]:
@@ -663,7 +667,7 @@ class MultiAgentCoordinator:
             }
 
         except Exception as e:
-            print(f"导出记忆时发生错误: {e}")
+            self.logger.error(f"导出记忆时发生错误: {e}")
             return {
                 "success": False,
                 "error": str(e),

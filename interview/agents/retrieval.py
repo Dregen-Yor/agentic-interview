@@ -5,6 +5,7 @@
 
 import os
 import pymongo
+import logging
 from typing import List, Dict, Any, Optional
 from bson import json_util, ObjectId
 import json
@@ -15,6 +16,9 @@ class RetrievalSystem:
     """检索系统，负责从知识库和数据库获取信息"""
     
     def __init__(self):
+        # Initialize logger
+        self.logger = logging.getLogger("interview.agents.retrieval")
+
         # MongoDB 设置
         self.client = pymongo.MongoClient(os.getenv("MONGODB_URI"))
         self.db = self.client[os.getenv("MONGODB_DB")]
@@ -24,14 +28,14 @@ class RetrievalSystem:
         self.problem_collection = self.db["problem"]
         self.memory_collection = self.db["interview_memories"]
 
-        # 初始化OpenAI客户端（使用DashScope）
+        # 初始化OpenAI客户端
         self.embedding_client = OpenAI(
             api_key=os.getenv("ALIYUN_API_KEY"),
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+            base_url=os.getenv("ALIYUN_BASE_URL")
         )
     
     def get_embedding(self, text: str) -> Optional[List[float]]:
-        """生成文本向量 - 使用OpenAI SDK调用DashScope"""
+        """生成文本向量 - 使用OpenAI SDK调用"""
         try:
             # 使用OpenAI SDK的embeddings.create方法
             completion = self.embedding_client.embeddings.create(
@@ -45,7 +49,7 @@ class RetrievalSystem:
                 return completion.data[0].embedding
             return None
         except Exception as e:
-            print(f"Error generating embedding with OpenAI SDK: {e}")
+            self.logger.error("Error generating embedding with OpenAI SDK: {e}")
             return None
     
     def get_resume_by_name(self, name: str) -> Dict[str, Any]:
@@ -61,7 +65,7 @@ class RetrievalSystem:
                     return {"error": f"找不到姓名为'{name}'的简历。"}
             return {"error": f"找不到姓名为'{name}'的用户。"}
         except Exception as e:
-            print(f"Error retrieving resume for {name}: {e}")
+            self.logger.error("Error retrieving resume for {name}: {e}")
             return {"error": f"检索简历时发生错误: {str(e)}"}
     
     def rag_search(self, query: str, limit: int = 3) -> str:
@@ -71,7 +75,7 @@ class RetrievalSystem:
             from interview.tools.rag_tool import rag_search as tool_rag_search
             return tool_rag_search.invoke({"query": query}) if hasattr(tool_rag_search, "invoke") else tool_rag_search(query)
         except Exception as e:
-            print(f"调用 rag_search 工具失败，fallback 到空结果: {e}")
+            self.logger.warning("调用 rag_search 工具失败，fallback 到空结果: {e}")
             return "在知识库中没有找到相关信息。"
     
     def get_interview_questions_from_kb(self, position: str, skills: List[str], difficulty: str = "medium") -> List[str]:
@@ -143,11 +147,11 @@ class RetrievalSystem:
             }
             
             result = self.result_collection.insert_one(interview_record)
-            print(f"面试结果已保存，ID: {result.inserted_id}")
+            self.logger.info("面试结果已保存，ID: {result.inserted_id}")
             return True
             
         except Exception as e:
-            print(f"保存面试结果时发生错误: {e}")
+            self.logger.error("保存面试结果时发生错误: {e}")
             return False
     
     def _format_decision(self, decision: str) -> str:
@@ -165,7 +169,7 @@ class RetrievalSystem:
             results = list(self.result_collection.find({"name": candidate_name}))
             return json.loads(json_util.dumps(results))
         except Exception as e:
-            print(f"获取候选人历史记录时发生错误: {e}")
+            self.logger.error("获取候选人历史记录时发生错误: {e}")
             return []
 
     def save_memory(self, memory_data: Dict[str, Any]) -> bool:
@@ -194,11 +198,11 @@ class RetrievalSystem:
 
             success = result.acknowledged
             if success:
-                print(f"面试记忆已保存: {memory_data['session_id']}")
+                self.logger.info("面试记忆已保存: {memory_data['session_id']}")
             return success
 
         except Exception as e:
-            print(f"保存面试记忆时发生错误: {e}")
+            self.logger.error("保存面试记忆时发生错误: {e}")
             return False
 
     def load_memory(self, session_id: str) -> Optional[Dict[str, Any]]:
@@ -211,7 +215,7 @@ class RetrievalSystem:
                 return json.loads(json_util.dumps(memory_record))
             return None
         except Exception as e:
-            print(f"加载面试记忆时发生错误: {e}")
+            self.logger.error("加载面试记忆时发生错误: {e}")
             return None
 
     def get_candidate_memories(self, candidate_name: str) -> List[Dict[str, Any]]:
@@ -223,7 +227,7 @@ class RetrievalSystem:
                 result.pop("_id", None)
             return json.loads(json_util.dumps(results))
         except Exception as e:
-            print(f"获取候选人记忆记录时发生错误: {e}")
+            self.logger.error("获取候选人记忆记录时发生错误: {e}")
             return []
 
     def delete_memory(self, session_id: str) -> bool:
@@ -232,10 +236,10 @@ class RetrievalSystem:
             result = self.memory_collection.delete_one({"session_id": session_id})
             success = result.deleted_count > 0
             if success:
-                print(f"记忆记录已删除: {session_id}")
+                self.logger.info("记忆记录已删除: {session_id}")
             return success
         except Exception as e:
-            print(f"删除记忆记录时发生错误: {e}")
+            self.logger.error("删除记忆记录时发生错误: {e}")
             return False
 
     def cleanup_old_memories(self, days_old: int = 30) -> int:
@@ -249,10 +253,10 @@ class RetrievalSystem:
             })
 
             deleted_count = result.deleted_count
-            print(f"已清理 {deleted_count} 条过期记忆记录")
+            self.logger.info("已清理 {deleted_count} 条过期记忆记录")
             return deleted_count
         except Exception as e:
-            print(f"清理过期记忆记录时发生错误: {e}")
+            self.logger.error("清理过期记忆记录时发生错误: {e}")
             return 0
     
     def close_connection(self):
