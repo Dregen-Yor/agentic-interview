@@ -122,6 +122,7 @@ class RetrievalSystem:
         self.result_collection = self.db["result"]
         self.problem_collection = self.db["problem"]
         self.memory_collection = self.db["interview_memories"]
+        self.conversation_memory_collection = self.db["conversation_memories"]
 
         # 初始化OpenAI客户端 (用于阿里云embedding)
         self.embedding_client = OpenAI(
@@ -342,6 +343,161 @@ class RetrievalSystem:
         except Exception as e:
             self.logger.error(f"清理过期记忆记录时发生错误: {e}")
             return 0
+
+    # ==================== conversation_memories 集合操作 ====================
+
+    def save_turn_document(self, turn_doc: Dict[str, Any]) -> bool:
+        """插入一条 turn 文档到 conversation_memories"""
+        try:
+            result = self.conversation_memory_collection.insert_one(turn_doc)
+            self.logger.debug(f"Turn 文档已保存: session={turn_doc.get('session_id')}, turn={turn_doc.get('turn_index')}")
+            return result.acknowledged
+        except Exception as e:
+            self.logger.error(f"保存 turn 文档失败: {e}")
+            return False
+
+    def save_session_meta(self, meta_doc: Dict[str, Any]) -> bool:
+        """Upsert session_meta 文档到 conversation_memories"""
+        try:
+            result = self.conversation_memory_collection.replace_one(
+                {"session_id": meta_doc["session_id"], "doc_type": "session_meta"},
+                meta_doc,
+                upsert=True
+            )
+            self.logger.debug(f"Session meta 已保存: {meta_doc.get('session_id')}")
+            return result.acknowledged
+        except Exception as e:
+            self.logger.error(f"保存 session meta 失败: {e}")
+            return False
+
+    def update_session_meta(self, session_id: str, update_ops: Dict[str, Any]) -> bool:
+        """使用 $set/$inc/$push 增量更新 session_meta"""
+        try:
+            result = self.conversation_memory_collection.update_one(
+                {"session_id": session_id, "doc_type": "session_meta"},
+                update_ops
+            )
+            return result.acknowledged
+        except Exception as e:
+            self.logger.error(f"更新 session meta 失败: {e}")
+            return False
+
+    def find_session_meta(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """查询 session_meta 文档"""
+        try:
+            doc = self.conversation_memory_collection.find_one(
+                {"session_id": session_id, "doc_type": "session_meta"}
+            )
+            if doc:
+                doc.pop("_id", None)
+            return doc
+        except Exception as e:
+            self.logger.error(f"查询 session meta 失败: {e}")
+            return None
+
+    def find_turns_by_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """按 turn_index 升序查询某会话的 turn 文档"""
+        try:
+            cursor = self.conversation_memory_collection.find(
+                {"session_id": session_id, "doc_type": "turn"}
+            ).sort("turn_index", pymongo.ASCENDING)
+
+            if limit is not None:
+                cursor = cursor.limit(limit)
+
+            results = []
+            for doc in cursor:
+                doc.pop("_id", None)
+                results.append(doc)
+            return results
+        except Exception as e:
+            self.logger.error(f"查询 turn 文档失败: {e}")
+            return []
+
+    def vector_search_memories(
+        self,
+        query_embedding: List[float],
+        num_candidates: int = 50,
+        limit: int = 10,
+        pre_filter: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """使用 $vectorSearch 管道在 conversation_memories 中进行向量检索"""
+        try:
+            vector_search_stage = {
+                "$vectorSearch": {
+                    "index": "memory_vector_index",
+                    "path": "embedding",
+                    "queryVector": query_embedding,
+                    "numCandidates": num_candidates,
+                    "limit": limit,
+                }
+            }
+
+            if pre_filter:
+                vector_search_stage["$vectorSearch"]["filter"] = pre_filter
+
+            pipeline = [
+                vector_search_stage,
+                {
+                    "$project": {
+                        "_id": 0,
+                        "session_id": 1,
+                        "turn_index": 1,
+                        "candidate_name": 1,
+                        "state": 1,
+                        "action": 1,
+                        "reward": 1,
+                        "importance": 1,
+                        "combined_text": 1,
+                        "timestamp": 1,
+                        "similarity_score": {"$meta": "vectorSearchScore"},
+                    }
+                },
+            ]
+
+            results = list(self.conversation_memory_collection.aggregate(pipeline))
+            return results
+        except Exception as e:
+            self.logger.error(f"向量检索 memories 失败: {e}")
+            return []
+
+    def delete_conversation_memories(self, session_id: str) -> int:
+        """删除某会话的全部文档（turn + session_meta）"""
+        try:
+            result = self.conversation_memory_collection.delete_many({"session_id": session_id})
+            deleted = result.deleted_count
+            self.logger.info(f"已删除会话 {session_id} 的 {deleted} 条文档")
+            return deleted
+        except Exception as e:
+            self.logger.error(f"删除会话文档失败: {e}")
+            return 0
+
+    def ensure_memory_indexes(self) -> None:
+        """创建 conversation_memories 的常规索引（幂等操作）"""
+        try:
+            coll = self.conversation_memory_collection
+
+            # 会话内查询索引
+            coll.create_index(
+                [("session_id", pymongo.ASCENDING), ("doc_type", pymongo.ASCENDING), ("turn_index", pymongo.ASCENDING)],
+                name="idx_session_doc_turn"
+            )
+
+            # 跨会话检索索引
+            coll.create_index(
+                [("candidate_name", pymongo.ASCENDING), ("doc_type", pymongo.ASCENDING), ("importance", pymongo.DESCENDING)],
+                name="idx_candidate_doc_importance"
+            )
+
+            # 清理过期数据索引
+            coll.create_index(
+                [("doc_type", pymongo.ASCENDING), ("status", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)],
+                name="idx_doc_status_created"
+            )
+
+            self.logger.info("conversation_memories 常规索引创建完成")
+        except Exception as e:
+            self.logger.error(f"创建常规索引失败: {e}")
 
     def close_connection(self):
         """关闭数据库连接"""

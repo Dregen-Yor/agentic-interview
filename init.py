@@ -154,6 +154,79 @@ def create_vector_index():
             print("MongoDB connection closed after index creation.")
 
 
+def create_memory_vector_index():
+    """
+    Creates a vector search index on the 'conversation_memories' collection
+    for Memento-style case retrieval.
+    Also creates regular indexes for common query patterns.
+    """
+    client = None
+    try:
+        print("Connecting to MongoDB to create memory vector index...")
+        client = MongoClient(MONGO_URI)
+        db = client[DB_NAME]
+
+        memory_collection_name = "conversation_memories"
+
+        # 1. 创建向量搜索索引 (Atlas Search)
+        vector_index_model = {
+            "fields": [
+                {
+                    "type": "vector",
+                    "path": "embedding",
+                    "numDimensions": VECTOR_DIMENSION,
+                    "similarity": "cosine",
+                },
+                {
+                    "type": "filter",
+                    "path": "doc_type",
+                },
+                {
+                    "type": "filter",
+                    "path": "session_id",
+                },
+                {
+                    "type": "filter",
+                    "path": "candidate_name",
+                },
+            ]
+        }
+
+        print("Creating memory vector search index on MongoDB Atlas...")
+        db.command(
+            "createSearchIndex",
+            memory_collection_name,
+            index={"name": "memory_vector_index", "definition": vector_index_model},
+        )
+        print("Memory vector search index creation command issued successfully.")
+
+        # 2. 创建常规索引（幂等）
+        coll = db[memory_collection_name]
+
+        coll.create_index(
+            [("session_id", 1), ("doc_type", 1), ("turn_index", 1)],
+            name="idx_session_doc_turn"
+        )
+        coll.create_index(
+            [("candidate_name", 1), ("doc_type", 1), ("importance", -1)],
+            name="idx_candidate_doc_importance"
+        )
+        coll.create_index(
+            [("doc_type", 1), ("status", 1), ("created_at", 1)],
+            name="idx_doc_status_created"
+        )
+        print("Regular indexes created successfully.")
+        print("Note: Vector index creation is asynchronous and may take a few minutes.")
+
+    except Exception as e:
+        print(f"An error occurred during memory index creation: {e}")
+    finally:
+        if client:
+            client.close()
+            print("MongoDB connection closed after memory index creation.")
+
+
 if __name__ == "__main__":
     load_data_to_mongodb()
     create_vector_index()
+    create_memory_vector_index()

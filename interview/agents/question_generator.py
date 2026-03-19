@@ -9,6 +9,7 @@ from typing import Dict, Any, List
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from .base_agent import BaseAgent
 from interview.tools.rag_tools import RetrievalSystem, rag_search as rag_search_tool
+from interview.rubrics import RUBRIC_DIMENSIONS
 
 
 class QuestionGeneratorAgent(BaseAgent):
@@ -70,6 +71,12 @@ Output Requirements (must be in strict JSON format):
 6. The question must include all necessary conditions and constraints, without omitting any key information. For professional concepts in graph theory, probability, combinatorics, explanations must be provided in the question.
 
 All outputs must be in Chinese.
+
+Resume-Anchored Questioning Rules:
+- When a structured resume profile is provided, questions introducing a new topic MUST reference a specific resume item.
+- Follow-up questions should target evidence needed to disambiguate rubric levels (LOW vs MEDIUM vs HIGH).
+- The "reasoning" field must cite which resume item and dimension the question targets.
+- If the profile indicates weak dimensions, prioritize questions that can elicit evidence for those dimensions.
 """
     
     def get_system_prompt(self) -> str:
@@ -80,15 +87,14 @@ All outputs must be in Chinese.
         """
         生成面试问题
         input_data包含:
-        - resume_data: 简历信息
         - interview_stage: 面试阶段 (opening/technical/behavioral/closing)
         - previous_qa: 之前的问答记录
         - current_score: 当前评分情况
         - target_type: 目标题目类型（math_logic/technical/behavioral/experience），可选
+        - parsed_profile: 简历结构化解析结果（由 ResumeParser 生成）
         """
         self.logger.debug("===== QuestionGenerator.process() 开始执行 =====")
         try:
-            resume_data = input_data.get("resume_data", {})
             interview_stage = input_data.get("interview_stage", "technical")
             previous_qa = input_data.get("previous_qa", [])
             current_score = input_data.get("current_score", 0)
@@ -97,7 +103,36 @@ All outputs must be in Chinese.
             
             # Build the prompt
             prompt_parts = []
-            
+
+            # v2.0: 注入 Memento 历史参考案例（如果有）
+            similar_cases = input_data.get("similar_cases_context")
+            if similar_cases:
+                prompt_parts.append(f"以下是来自其他类似面试的历史参考案例：\n{similar_cases}")
+                prompt_parts.append("这些案例仅供参考，请勿直接复制题目，需根据当前候选人情况调整。")
+
+            # 注入简历结构化 profile（简历锚定出题）
+            parsed_profile = input_data.get("parsed_profile")
+            if parsed_profile and parsed_profile.get("items"):
+                prompt_parts.append(self._format_profile_for_prompt(parsed_profile))
+
+                weak_dims = parsed_profile.get("weakest_dimensions", [])
+                if weak_dims:
+                    dim_names = [RUBRIC_DIMENSIONS[d]["name"] for d in weak_dims if d in RUBRIC_DIMENSIONS]
+                    if dim_names:
+                        prompt_parts.append(
+                            f"The candidate shows weaker signals in: {', '.join(dim_names)}. "
+                            f"Prioritize questions that can elicit evidence for these dimensions."
+                        )
+
+                items_map = {item["id"]: item for item in parsed_profile["items"]}
+                for pid in parsed_profile.get("suggested_probe_items", []):
+                    item = items_map.get(pid)
+                    if item:
+                        gaps = ", ".join(item.get("knowledge_gaps", [])[:3]) or "none identified"
+                        prompt_parts.append(
+                            f"Suggested probe: '{item['summary']}' (gaps: {gaps})"
+                        )
+
             if interview_stage == "opening":
                 # 开场以数理逻辑/自我介绍的轻量题目为主，由于总轮次有限，需要高效
                 prompt_parts.append(
@@ -256,26 +291,26 @@ All outputs must be in Chinese.
             self.logger.warning(f"Failed to invoke with tools, falling back to text-only generation: {e}")
             return self._invoke_model(messages)
     
-    def generate_initial_questions(self, resume_data: Dict[str, Any], count: int = 3) -> List[Dict[str, Any]]:
+    def generate_initial_questions(self, count: int = 3, parsed_profile: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """生成初始问题集"""
         questions = []
-        
+
         # 开场问题
         opening_result = self.process({
-            "resume_data": resume_data,
-            "interview_stage": "opening"
+            "interview_stage": "opening",
+            "parsed_profile": parsed_profile,
         })
         questions.append(opening_result)
-        
+
         # 技术问题
         for i in range(count - 1):
             technical_result = self.process({
-                "resume_data": resume_data,
                 "interview_stage": "technical",
-                "previous_qa": []
+                "previous_qa": [],
+                "parsed_profile": parsed_profile,
             })
             questions.append(technical_result)
-        
+
         return questions
 
     def _fix_common_json_issues(self, response: str) -> str:
@@ -316,6 +351,25 @@ All outputs must be in Chinese.
         JSON解析失败时直接返回整个字符串
         """
         return raw_response.strip()
+
+    def _format_profile_for_prompt(self, profile: Dict[str, Any]) -> str:
+        """将 structured_profile 格式化为紧凑的 prompt 文本"""
+        lines = ["=== Candidate Resume Profile ==="]
+        for item in profile.get("items", []):
+            signals = item.get("dimension_signals", {})
+            active = [f"{k}={v}" for k, v in signals.items() if v != "NO_SIGNAL"]
+            lines.append(
+                f"- [{item.get('id')}] ({item.get('category', 'unknown')}) "
+                f"{item.get('summary', '')} | involvement={item.get('inferred_involvement', '?')} | "
+                f"signals: {', '.join(active) if active else 'none'}"
+            )
+
+        agg = profile.get("aggregate_signals", {})
+        if agg:
+            agg_str = ", ".join(f"{k}={v}" for k, v in agg.items())
+            lines.append(f"Aggregate signals: {agg_str}")
+
+        return "\n".join(lines)
 
     def _count_question_types(self, previous_qa: List[Dict[str, Any]]) -> Dict[str, int]:
         """
