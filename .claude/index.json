@@ -1,0 +1,107 @@
+{
+  "generated_at": "2026-04-24T15:26:51.503Z",
+  "root_claude_md": "CLAUDE.md",
+  "modules": [
+    {
+      "path": "interview_backend",
+      "language": "Python",
+      "entry": "interview_backend/asgi.py",
+      "claude_md": "interview_backend/CLAUDE.md",
+      "key_files": [
+        "interview_backend/settings.py",
+        "interview_backend/urls.py",
+        "interview_backend/asgi.py"
+      ]
+    },
+    {
+      "path": "interview",
+      "language": "Python",
+      "entry": "interview/consumers.py",
+      "claude_md": "interview/CLAUDE.md",
+      "key_files": [
+        "interview/consumers.py",
+        "interview/views.py",
+        "interview/users.py",
+        "interview/urls.py",
+        "interview/llm.py",
+        "interview/rubrics.py"
+      ],
+      "interfaces": [
+        "POST /api/",
+        "GET /api/interview/status/",
+        "POST /api/interview/end/",
+        "POST /api/create/",
+        "POST /api/check/",
+        "POST /api/verify/",
+        "GET /api/resume/",
+        "POST /api/resume/update/",
+        "GET /api/result/",
+        "WS /ws/interview/<chat_id>/"
+      ],
+      "tests": null
+    },
+    {
+      "path": "interview/agents",
+      "language": "Python",
+      "entry": "interview/agents/coordinator.py",
+      "claude_md": "interview/agents/CLAUDE.md",
+      "key_files": [
+        "interview/agents/coordinator.py",
+        "interview/agents/base_agent.py",
+        "interview/agents/resume_parser.py",
+        "interview/agents/question_generator.py",
+        "interview/agents/scoring_agent.py",
+        "interview/agents/security_agent.py",
+        "interview/agents/summary_agent.py",
+        "interview/agents/session.py",
+        "interview/agents/memory.py"
+      ],
+      "tests": null
+    },
+    {
+      "path": "interview/tools",
+      "language": "Python",
+      "entry": "interview/tools/rag_tools.py",
+      "claude_md": "interview/tools/CLAUDE.md",
+      "key_files": [
+        "interview/tools/rag_tools.py"
+      ],
+      "data_models": ["users", "resumes", "problem", "result", "interview_memories"]
+    },
+    {
+      "path": "frontend",
+      "language": "TypeScript/Vue3",
+      "entry": "frontend/src/main.ts",
+      "claude_md": "frontend/CLAUDE.md",
+      "key_files": [
+        "frontend/src/router/index.ts",
+        "frontend/src/stores/auth.ts",
+        "frontend/package.json"
+      ],
+      "tests": null
+    }
+  ],
+  "coverage": {
+    "estimated_total_files": 35,
+    "scanned_files": 14,
+    "coverage_percent": 40,
+    "gaps": [
+      "interview/views.py 未读取",
+      "interview/users.py 未读取",
+      "interview/llm.py 未读取",
+      "interview/rubrics.py 未读取",
+      "interview/agents/coordinator.py 未读取",
+      "interview/agents/question_generator.py 未读取",
+      "interview/agents/scoring_agent.py 未读取",
+      "interview/agents/security_agent.py 未读取",
+      "interview/agents/summary_agent.py 未读取",
+      "frontend/src/views/* 未读取",
+      "frontend/src/stores/auth.ts 未读取"
+    ]
+  },
+  "truncated": false,
+  "ignore_patterns": [
+    ".venv/", ".env", "__pycache__/", "*.log", "node_modules",
+    ".DS_Store", "dist", "coverage", "*.local"
+  ]
+}

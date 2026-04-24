@@ -1,0 +1,45 @@
+[根目录](../CLAUDE.md) > **interview_backend**
+
+# interview_backend 模块
+
+## 模块职责
+
+Django 项目配置层：ASGI 入口、全局设置、URL 根路由。不含业务逻辑。
+
+## 入口与启动
+
+- ASGI 入口：`asgi.py` → `interview_backend.asgi:application`
+- 启动命令：`daphne -b 0.0.0.0 -p 8000 interview_backend.asgi:application`
+- URL 根路由：`urls.py` → 将 `api/` 前缀全部转发给 `interview.urls`
+
+## 关键配置（`settings.py`）
+
+| 配置项 | 值 |
+|--------|-----|
+| `ASGI_APPLICATION` | `interview_backend.asgi.application` |
+| `CHANNEL_LAYERS` | Redis `127.0.0.1:6379` |
+| `DATABASES` | SQLite（仅框架内部使用） |
+| `ALLOWED_HOSTS` | `["127.0.0.1", "localhost", "101.76.218.89", "*"]` |
+| `CORS_ALLOW_ALL_ORIGINS` | `True` |
+| `DEBUG` | `True`（生产环境需关闭） |
+
+已安装应用：`daphne`、`channels`、标准 Django 应用、`corsheaders`、`interview`
+
+## 安全注意事项
+
+- `SECRET_KEY` 硬编码在 `settings.py`，生产环境必须替换为环境变量
+- `DEBUG=True` 和 `CORS_ALLOW_ALL_ORIGINS=True` 不适合生产
+- `AUTH_PASSWORD_VALIDATORS` 已清空，无密码强度校验
+
+## 相关文件
+
+- `settings.py` — 全局配置
+- `urls.py` — 根路由（转发至 `interview/urls.py`）
+- `asgi.py` — ASGI 入口，含 WebSocket 路由
+- `wsgi.py` — WSGI 入口（不支持 WebSocket）
+
+## Changelog
+
+| 日期 | 变更 |
+|------|------|
+| 2026-04-24T15:26:51.503Z | 初始化模块文档 |
