@@ -6,11 +6,18 @@
 
 统一数据访问层。封装所有 MongoDB 操作和 RAG 向量检索，以 LangChain `@tool` 形式暴露给智能体。
 
-## 关键组件（`rag_tools.py`）
+## 关键组件
 
-- `RetrievalSystem` — 统一 MongoDB 访问类，处理用户、简历、面试记忆、结果的 CRUD
-- `rag_search` — LangChain `@tool`，对 `problem` 集合执行向量相似度搜索
-- `_get_embedding_from_init()` — 调用阿里云 `text-embedding-v4` 生成 1024 维向量
+| 文件 / 符号 | 说明 |
+|------|------|
+| `db.py` (`get_mongo_client / get_mongo_db / close_mongo_client`) | **进程级共享 `MongoClient` 单例 + 双检锁懒加载**，所有 MongoDB 调用必须通过这里拿连接 |
+| `rag_tools.py::RetrievalSystem` | 高层 MongoDB 访问类，统一处理用户、简历、记忆、面试结果的 CRUD（内部复用 `db.py` 的连接） |
+| `rag_tools.py::rag_search` | LangChain `@tool`，对 `problem` 集合执行向量相似度搜索 |
+| `rag_tools.py::_get_embedding_from_init()` | 调用阿里云 `text-embedding-v4` 生成 1024 维向量 |
+
+> ⚠️ 2026-04-27 起：
+> - 不再允许在 view / agent / 脚本里独立 `pymongo.MongoClient(...)`；统一 `from interview.tools.db import get_mongo_db`。
+> - `RetrievalSystem.close_connection()` 已删除（连接池按进程生命周期统一释放）。
 
 ## MongoDB 集合
 
@@ -74,16 +81,20 @@ def rag_search(query: str) -> str:
 
 ## 使用规范
 
-- 所有 MongoDB 操作必须通过 `RetrievalSystem`，不得直接操作集合
-- 协调器（`coordinator.py`）负责调用持久化，各智能体不得自行保存数据
+- **MongoDB 客户端**：所有访问必须 `from interview.tools.db import get_mongo_db` 拿数据库句柄；不允许 ad-hoc 新建 `MongoClient`。
+- **业务层访问**：用户/简历/面试结果/记忆等业务对象的读写仍走 `RetrievalSystem`，避免散落业务逻辑。
+- 协调器（`coordinator.py`）负责调用持久化，各智能体不得自行保存数据。
 
 ## 相关文件
 
-- `rag_tools.py` — 全部数据访问逻辑
-- `init.py`（项目根）— 初始化向量索引，提供 `get_embedding()` 函数
+- `db.py` — 共享 MongoClient 连接池（线程安全双检锁）
+- `__init__.py` — 显式 re-export `get_mongo_client / get_mongo_db / close_mongo_client`
+- `rag_tools.py` — 高层数据访问 + RAG 工具
+- `init.py`（项目根）— 初始化向量索引，提供 `get_embedding()` 函数；2026-04-27 起也通过 `db.py` 拿连接
 
 ## Changelog
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-27 | 新增 `db.py` 共享连接池；`RetrievalSystem` / `rag_search` / `init.py` 全部切换；删除 `close_connection()` |
 | 2026-04-24T15:26:51.503Z | 初始化模块文档 |

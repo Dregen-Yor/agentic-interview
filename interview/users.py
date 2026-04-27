@@ -1,307 +1,187 @@
-import os
-import django
-from django.http import JsonResponse
-from django.conf import settings
-from django.views.decorators.csrf import csrf_exempt
-from django.contrib.auth.hashers import make_password, check_password
-import pymongo
+"""
+用户与简历相关的 HTTP 视图。
+
+改造要点：
+- 共享 MongoClient 连接池（interview.tools.db.get_mongo_db），避免每次请求新建/关闭连接。
+- 统一通过 interview.auth_utils 处理 JWT 生成、解码与权限校验，移除散落各处的重复代码。
+- 视图函数通过 @jwt_required 装饰器获得已校验的 request.jwt_payload。
+"""
+from __future__ import annotations
+
 import json
-import jwt
-from datetime import datetime, timedelta, timezone
+import logging
+
+import pymongo
 from bson.objectid import ObjectId
+from django.contrib.auth.hashers import check_password, make_password
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 
-from dotenv import load_dotenv
-load_dotenv()
+from interview.auth_utils import generate_token, jwt_required
+from interview.tools.db import get_mongo_db
 
-# --- HELPER FUNCTION TO GET DB ---
-def get_db():
-    """Helper function to connect to MongoDB and get the database."""
-    client = pymongo.MongoClient(os.getenv("MONGODB_URI"))
-    db = client[os.getenv("MONGODB_DB")]
-    return db, client
+logger = logging.getLogger("interview.users")
 
-# --- REPLACEMENT for create_user ---
+
 @csrf_exempt
 def new_user(request):
-    """Creates a new user with a hashed password and an empty resume."""
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Only POST method is allowed'}, status=405)
+    """创建新用户，密码使用 Django 的 hashing 算法存储。"""
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST method is allowed"}, status=405)
 
     try:
         data = json.loads(request.body)
-        name = data.get('name')
-        password = data.get('password')
+        name = data.get("name")
+        password = data.get("password")
 
         if not all([name, password]):
-            return JsonResponse({'error': 'Name and password are required'}, status=400)
+            return JsonResponse({"error": "Name and password are required"}, status=400)
 
-        # Hash the password for security
-        hashed_password = make_password(password)
+        db = get_mongo_db()
+        users_collection = db["users"]
 
-        db, client = get_db()
-        users_collection = db['users']
-        
-        # Check if user already exists
-        if users_collection.find_one({'name': name}):
-            client.close()
-            return JsonResponse({'error': 'User with this name already exists'}, status=409)
+        if users_collection.find_one({"name": name}):
+            return JsonResponse({"error": "User with this name already exists"}, status=409)
 
         user_id = users_collection.insert_one({
-            'name': name,
-            'password': hashed_password,
+            "name": name,
+            "password": make_password(password),
         }).inserted_id
-        
-        # Create an empty resume for the new user
-        resumes_collection = db['resumes']
-        resumes_collection.insert_one({
-            '_id': user_id,
-            'content': {}
-        })
 
-        client.close()
-        return JsonResponse({'message': 'User created successfully', 'user_id': str(user_id)}, status=201)
+        db["resumes"].insert_one({"_id": user_id, "content": {}})
+
+        return JsonResponse(
+            {"message": "User created successfully", "user_id": str(user_id)},
+            status=201,
+        )
 
     except json.JSONDecodeError:
-        return JsonResponse({'error': 'Invalid JSON in request body'}, status=400)
-    except Exception as e:
-        return JsonResponse({'error': 'An unexpected error occurred', 'details': str(e)}, status=500)
+        return JsonResponse({"error": "Invalid JSON in request body"}, status=400)
+    except Exception:
+        logger.exception("new_user 出错")
+        return JsonResponse({"error": "An unexpected error occurred"}, status=500)
 
 
-# --- NEW function check_user ---
 @csrf_exempt
 def check_user(request):
-    """Checks user credentials and returns a JWT token if valid."""
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Only POST method is allowed'}, status=405)
+    """校验用户名/密码，成功后返回 JWT。"""
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST method is allowed"}, status=405)
 
     try:
         data = json.loads(request.body)
-        name = data.get('name')
-        password = data.get('password')
+        name = data.get("name")
+        password = data.get("password")
 
         if not name or not password:
-            return JsonResponse({'error': 'Name and password are required'}, status=400)
+            return JsonResponse({"error": "Name and password are required"}, status=400)
 
-        db, client = get_db()
-        users_collection = db['users']
-        user = users_collection.find_one({'name': name})
-        client.close()
+        db = get_mongo_db()
+        user = db["users"].find_one({"name": name})
 
-        if user and check_password(password, user['password']):
-            # Password is correct, generate JWT
-            payload = {
-                'user_id': str(user['_id']),
-                'name': user['name'],
-                'exp': datetime.now(timezone.utc) + timedelta(hours=1)  # Token expires in 1 hour
-            }
-            token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
-            
-            return JsonResponse({'message': 'Login successful', 'token': token})
-        else:
-            return JsonResponse({'error': 'Invalid credentials'}, status=401)
+        if user and check_password(password, user["password"]):
+            token = generate_token(user["_id"], user["name"])
+            return JsonResponse({"message": "Login successful", "token": token})
+
+        return JsonResponse({"error": "Invalid credentials"}, status=401)
 
     except json.JSONDecodeError:
-        return JsonResponse({'error': 'Invalid JSON in request body'}, status=400)
-    except Exception as e:
-        return JsonResponse({'error': 'An unexpected error occurred', 'details': str(e)}, status=500)
+        return JsonResponse({"error": "Invalid JSON in request body"}, status=400)
+    except Exception:
+        logger.exception("check_user 出错")
+        return JsonResponse({"error": "An unexpected error occurred"}, status=500)
+
 
 @csrf_exempt
+@jwt_required
 def verify_token(request):
-    """Verifies a JWT token from the Authorization header."""
-    if request.method != 'POST':
-        # Verification endpoints typically use POST or GET; we keep POST for consistency
-        return JsonResponse({'error': 'Only POST method is allowed'}, status=405)
+    """验证 JWT 是否有效（解码逻辑统一交给 jwt_required 装饰器）。"""
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST method is allowed"}, status=405)
 
-    try:
-        # Retrieve the token from the request header
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return JsonResponse({'error': 'Authorization header missing or invalid'}, status=401)
+    payload = request.jwt_payload
+    return JsonResponse(
+        {"message": "Token is valid", "user_id": payload["user_id"]},
+        status=200,
+    )
 
-        token = auth_header.split(' ')[1]
-
-        # Decode and validate the token
-        # jwt.decode automatically checks for expiration and raises ExpiredSignatureError if expired
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
-
-        # Optionally verify that the user in the payload exists in the database
-        
-        return JsonResponse({'message': 'Token is valid', 'user_id': payload['user_id']}, status=200)
-
-    except jwt.ExpiredSignatureError:
-        return JsonResponse({'error': 'Token has expired'}, status=401)
-    except jwt.InvalidTokenError:
-        return JsonResponse({'error': 'Invalid token'}, status=401)
-    except Exception as e:
-        return JsonResponse({'error': 'An unexpected error occurred', 'details': str(e)}, status=500)
 
 @csrf_exempt
+@jwt_required
 def get_user_resume(request):
-    """Gets a user's resume, requires JWT authentication."""
-    if request.method != 'GET':
-        return JsonResponse({'error': 'Only GET method is allowed'}, status=405)
-    
+    """获取当前用户的简历。"""
+    if request.method != "GET":
+        return JsonResponse({"error": "Only GET method is allowed"}, status=405)
+
     try:
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return JsonResponse({'error': 'Authorization header missing or invalid'}, status=401)
-        
-        token = auth_header.split(' ')[1]
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
-        user_id = ObjectId(payload['user_id'])
+        user_id = ObjectId(request.jwt_payload["user_id"])
+        resume = get_mongo_db()["resumes"].find_one({"_id": user_id})
+        if not resume:
+            return JsonResponse({"error": "Resume not found"}, status=404)
+        return JsonResponse({"resume": resume.get("content", {})}, status=200)
 
-        db, client = get_db()
-        resumes_collection = db['resumes']
-        resume = resumes_collection.find_one({'_id': user_id})
-        client.close()
-
-        if resume:
-            return JsonResponse({'resume': resume.get('content', {})}, status=200)
-        else:
-            return JsonResponse({'error': 'Resume not found'}, status=404)
-
-    except jwt.ExpiredSignatureError:
-        return JsonResponse({'error': 'Token has expired'}, status=401)
-    except jwt.InvalidTokenError:
-        return JsonResponse({'error': 'Invalid token'}, status=401)
-    except Exception as e:
-        return JsonResponse({'error': 'An unexpected error occurred', 'details': str(e)}, status=500)
+    except Exception:
+        logger.exception("get_user_resume 出错")
+        return JsonResponse({"error": "An unexpected error occurred"}, status=500)
 
 
 @csrf_exempt
+@jwt_required
 def update_user_resume(request):
-    """Updates a user's resume, requires JWT authentication."""
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Only POST method is allowed'}, status=405)
+    """更新当前用户的简历。"""
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST method is allowed"}, status=405)
 
     try:
-        # Token validation
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return JsonResponse({'error': 'Authorization header missing or invalid'}, status=401)
-        
-        token = auth_header.split(' ')[1]
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
-        user_id = ObjectId(payload['user_id'])
-
-        # Get resume content from request body
+        user_id = ObjectId(request.jwt_payload["user_id"])
         request_data = json.loads(request.body)
-        new_content = request_data.get('content')
+        new_content = request_data.get("content")
 
         if new_content is None:
-            return JsonResponse({'error': 'Missing "content" in request body'}, status=400)
+            return JsonResponse({"error": 'Missing "content" in request body'}, status=400)
 
-        # Update database
-        db, client = get_db()
-        resumes_collection = db['resumes']
-        result = resumes_collection.update_one(
-            {'_id': user_id},
-            {'$set': {'content': new_content}}
+        result = get_mongo_db()["resumes"].update_one(
+            {"_id": user_id},
+            {"$set": {"content": new_content}},
         )
-        client.close()
-
         if result.matched_count == 0:
-            return JsonResponse({'error': 'Resume not found for the user'}, status=404)
-        
-        return JsonResponse({'message': 'Resume updated successfully'}, status=200)
+            return JsonResponse({"error": "Resume not found for the user"}, status=404)
 
-    except jwt.ExpiredSignatureError:
-        return JsonResponse({'error': 'Token has expired'}, status=401)
-    except jwt.InvalidTokenError:
-        return JsonResponse({'error': 'Invalid token'}, status=401)
+        return JsonResponse({"message": "Resume updated successfully"}, status=200)
+
     except json.JSONDecodeError:
-        return JsonResponse({'error': 'Invalid JSON in request body'}, status=400)
-    except Exception as e:
-        return JsonResponse({'error': 'An unexpected error occurred', 'details': str(e)}, status=500)
+        return JsonResponse({"error": "Invalid JSON in request body"}, status=400)
+    except Exception:
+        logger.exception("update_user_resume 出错")
+        return JsonResponse({"error": "An unexpected error occurred"}, status=500)
+
 
 @csrf_exempt
+@jwt_required
 def get_interview_result(request):
-    """Gets a user's interview result, requires JWT authentication."""
-    if request.method != 'GET':
-        return JsonResponse({'error': 'Only GET method is allowed'}, status=405)
-    
+    """获取当前用户最近一次的面试结果。"""
+    if request.method != "GET":
+        return JsonResponse({"error": "Only GET method is allowed"}, status=405)
+
     try:
-        # Token validation
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return JsonResponse({'error': 'Authorization header missing or invalid'}, status=401)
-        
-        token = auth_header.split(' ')[1]
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
-        username = payload['name']
+        username = request.jwt_payload["name"]
+        result_collection = get_mongo_db()["result"]
 
-        # Get interview result from database
-        db, client = get_db()
-        result_collection = db['result']
-
-        # Find the latest result for the user by sorting by timestamp descending
-        # Try both field names for compatibility
         latest_result = result_collection.find_one(
-            {'$or': [{'candidate_name': username}, {'name': username}]},
-            sort=[('timestamp', pymongo.DESCENDING)]
+            {"$or": [{"candidate_name": username}, {"name": username}]},
+            sort=[("timestamp", pymongo.DESCENDING)],
         )
-        client.close()
 
         if not latest_result:
-            return JsonResponse({'error': 'Interview result not found for the user'}, status=404)
-        
-        # Convert ObjectId to string for JSON serialization
-        latest_result['_id'] = str(latest_result['_id'])
-        # Convert datetime to string
-        latest_result['timestamp'] = latest_result['timestamp'].isoformat()
+            return JsonResponse({"error": "Interview result not found for the user"}, status=404)
 
-        # Return the result directly, not wrapped in another 'result' key
+        latest_result["_id"] = str(latest_result["_id"])
+        timestamp = latest_result.get("timestamp")
+        if timestamp is not None and hasattr(timestamp, "isoformat"):
+            latest_result["timestamp"] = timestamp.isoformat()
+
         return JsonResponse(latest_result, status=200)
 
-    except jwt.ExpiredSignatureError:
-        return JsonResponse({'error': 'Token has expired'}, status=401)
-    except jwt.InvalidTokenError:
-        return JsonResponse({'error': 'Invalid token'}, status=401)
-    except Exception as e:
-        return JsonResponse({'error': 'An unexpected error occurred', 'details': str(e)}, status=500)
-
-
-@csrf_exempt
-def update_interview_result(request):
-    """Updates a user's interview result, requires JWT authentication."""
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Only POST method is allowed'}, status=405)
-
-    try:
-        # Token validation
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return JsonResponse({'error': 'Authorization header missing or invalid'}, status=401)
-        
-        token = auth_header.split(' ')[1]
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
-        username = payload['name']
-
-        # Get new result from request body
-        request_data = json.loads(request.body)
-        new_result = request_data.get('result')
-
-        if new_result is None:
-            return JsonResponse({'error': 'Missing "result" in request body'}, status=400)
-
-        # Update database
-        db, client = get_db()
-        result_collection = db['result']
-        result_collection.update_one(
-            {'name': username},
-            {'$set': {'result': new_result}}
-        )
-        client.close()
-
-        return JsonResponse({'message': 'Interview result updated successfully'}, status=200)
-
-    except jwt.ExpiredSignatureError:
-        return JsonResponse({'error': 'Token has expired'}, status=401)
-    except jwt.InvalidTokenError:
-        return JsonResponse({'error': 'Invalid token'}, status=401)
-    except json.JSONDecodeError:
-        return JsonResponse({'error': 'Invalid JSON in request body'}, status=400)
-    except Exception as e:
-        return JsonResponse({'error': 'An unexpected error occurred', 'details': str(e)}, status=500)
-
-    
+    except Exception:
+        logger.exception("get_interview_result 出错")
+        return JsonResponse({"error": "An unexpected error occurred"}, status=500)

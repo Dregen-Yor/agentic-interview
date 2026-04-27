@@ -1,6 +1,9 @@
 """
 RAG 向量检索与数据库工具
 整合了RAG检索、简历管理、面试结果存储、记忆管理等所有检索相关功能
+
+改造要点：所有 MongoDB 访问统一通过 interview.tools.db 中的共享连接池，
+不再在每次调用中创建/关闭客户端。
 """
 
 import os
@@ -11,30 +14,13 @@ from datetime import datetime, timedelta
 import pymongo
 from bson import json_util, ObjectId
 import json
-from dotenv import load_dotenv
 from openai import OpenAI
 
 from langchain.tools import tool
 
-# 加载环境变量
-load_dotenv()
+from interview.tools.db import get_mongo_db
 
-# 初始化logger
 logger = logging.getLogger("interview.tools.rag")
-
-
-# ==================== 私有辅助函数 ====================
-
-def _get_mongo_client():
-    """获取 MongoDB 客户端"""
-    return pymongo.MongoClient(os.getenv("MONGODB_URI"))
-
-
-def _get_mongo_collections():
-    """获取 MongoDB 连接与集合句柄"""
-    client = _get_mongo_client()
-    db = client[os.getenv("MONGODB_DB")]
-    return client, db["problem"]
 
 
 def _get_embedding_from_init(text: str) -> Optional[List[float]]:
@@ -81,9 +67,8 @@ def rag_search(query: str) -> str:
         },
     ]
 
-    client = None
     try:
-        client, problem_collection = _get_mongo_collections()
+        problem_collection = get_mongo_db()["problem"]
         results = list(problem_collection.aggregate(pipeline))
         if not results:
             return "在知识库中没有找到相关信息。"
@@ -97,12 +82,6 @@ def rag_search(query: str) -> str:
 
     except Exception as e:
         return f"执行 RAG 搜索时出错: {e}"
-    finally:
-        if client is not None:
-            try:
-                client.close()
-            except Exception:
-                pass
 
 
 # ==================== RetrievalSystem 类 ====================
@@ -111,12 +90,10 @@ class RetrievalSystem:
     """检索系统，负责从知识库和数据库获取信息"""
 
     def __init__(self):
-        # Initialize logger
         self.logger = logging.getLogger("interview.tools.rag.RetrievalSystem")
 
-        # MongoDB 设置
-        self.client = _get_mongo_client()
-        self.db = self.client[os.getenv("MONGODB_DB")]
+        # 复用进程共享的 MongoClient（连接池）
+        self.db = get_mongo_db()
         self.resumes_collection = self.db["resumes"]
         self.users_collection = self.db["users"]
         self.result_collection = self.db["result"]
@@ -124,10 +101,10 @@ class RetrievalSystem:
         self.memory_collection = self.db["interview_memories"]
         self.conversation_memory_collection = self.db["conversation_memories"]
 
-        # 初始化OpenAI客户端 (用于阿里云embedding)
+        # 阿里云 embedding 调用（OpenAI 兼容接口）
         self.embedding_client = OpenAI(
             api_key=os.getenv("ALIYUN_API_KEY"),
-            base_url=os.getenv("ALIYUN_BASE_URL")
+            base_url=os.getenv("ALIYUN_BASE_URL"),
         )
 
     def get_embedding(self, text: str) -> Optional[List[float]]:
@@ -498,8 +475,3 @@ class RetrievalSystem:
             self.logger.info("conversation_memories 常规索引创建完成")
         except Exception as e:
             self.logger.error(f"创建常规索引失败: {e}")
-
-    def close_connection(self):
-        """关闭数据库连接"""
-        if self.client:
-            self.client.close()

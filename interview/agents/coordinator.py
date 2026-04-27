@@ -11,6 +11,7 @@ import logging
 from .base_agent import BaseAgent, InterviewState
 from .memory import MemoryStore, MemoryRetriever
 from .session import InterviewSession
+from .qa_models import QATurn, get_question_type, get_score
 from interview.tools.rag_tools import RetrievalSystem
 from .question_generator import QuestionGeneratorAgent
 from .scoring_agent import ScoringAgent
@@ -139,50 +140,48 @@ class MultiAgentCoordinator:
             self.logger.debug(f"检测问题: {security_check.get('detected_issues', [])}")
             self.logger.debug("========================")
 
-            # 如果检测到高风险或建议阻止，直接结束面试
-            if (security_check.get("risk_level") == "high" or
-                security_check.get("suggested_action") == "block" or
-                security_check.get("is_safe") == False):
+            # 仅在明确 'block' 或高风险时终止；medium 级别的 warning 继续面试
+            should_block = (
+                security_check.get("suggested_action") == "block"
+                or security_check.get("risk_level") == "high"
+            )
+            if should_block:
+                self.logger.warning("⚠️ 安全警报：检测到恶意输入，终止面试")
 
-                self.logger.warning("⚠️ 安全警报：检测到恶意输入，直接终止面试")
-
-                # 记录这次恶意输入到问答历史
-                malicious_qa = {
-                    "question_data": session.question_data if session.question_data else {"question": "未知问题", "type": "security_violation"},
-                    "question": session.current_question.get("question", "") if session.current_question else "未知问题",
-                    "answer": user_answer,
-                    "question_type": "security_violation",
-                    "difficulty": "N/A",
-                    "security_check": security_check,
-                    "score_details": {"score": 0, "reasoning": "因安全违规终止面试"},
-                    "timestamp": datetime.now()
-                }
-                session.qa_history.append(malicious_qa)
+                malicious_turn = QATurn(
+                    question=session.current_question.get("question", "") if session.current_question else "未知问题",
+                    answer=user_answer,
+                    question_type="security_violation",
+                    difficulty="N/A",
+                    question_data=session.question_data or {"question": "未知问题", "type": "security_violation"},
+                    score_details={"score": 0, "reasoning": "因安全违规终止面试"},
+                    security_check=security_check,
+                )
+                session.qa_history.append(malicious_turn.to_dict())
                 session.add_score(0)
 
-                # 直接调用面试终止逻辑
                 return self._finalize_interview_with_security_termination(session_id, security_check)
 
-            # 2. 记录问答
-            current_qa = {
-                "question_data": session.question_data,
-                "question": session.current_question.get("question", ""),
-                "answer": user_answer,
-                "question_type": session.current_question.get("type", "general"),
-                "difficulty": session.current_question.get("difficulty", "medium"),
-                "security_check": security_check,
-                "timestamp": datetime.now()
-            }
+            # 2. 记录问答（统一通过 QATurn 落库）
+            current_turn = QATurn(
+                question=session.current_question.get("question", "") if session.current_question else "",
+                answer=user_answer,
+                question_type=get_question_type(session.current_question),
+                difficulty=(session.current_question or {}).get("difficulty", "medium"),
+                question_data=session.question_data,
+                security_check=security_check,
+            )
 
             # 3. 评分
             scoring_result = self.scoring_agent.process({
-                "question": current_qa["question"],
+                "question": current_turn.question,
                 "answer": user_answer,
-                "question_type": current_qa["question_type"],
-                "difficulty": current_qa["difficulty"]
+                "question_type": current_turn.question_type,
+                "difficulty": current_turn.difficulty,
             })
 
-            current_qa["score_details"] = scoring_result
+            current_turn.score_details = scoring_result
+            current_qa = current_turn.to_dict()
 
             # 4. 更新 session 评分追踪
             session.add_score(scoring_result["score"])
@@ -194,7 +193,7 @@ class MultiAgentCoordinator:
                 "turn_number": turn_index + 1,
                 "cumulative_avg_score": session.get_average_score(),
                 "previous_scores": session.score_list[:-1],
-                "question_types_so_far": [qa.get("question_type", "general") for qa in session.qa_history[:-1]],
+                "question_types_so_far": [get_question_type(qa) for qa in session.qa_history[:-1]],
             }
             action_data = {
                 "question_text": current_qa["question"],
@@ -324,7 +323,7 @@ class MultiAgentCoordinator:
                 "final_grade": "F",
                 "overall_score": 0,
                 "summary": final_summary.get("summary", ""),
-                "scores": [qa.get("score_details", {}).get("score", 0) for qa in session.qa_history],
+                "scores": [get_score(qa) for qa in session.qa_history],
                 "average_score": 0,
                 "total_questions": len(session.qa_history),
                 "qa_history": session.qa_history,
@@ -412,7 +411,7 @@ class MultiAgentCoordinator:
                 "final_grade": summary_result.get("final_grade", "C"),
                 "overall_score": summary_result.get("overall_score", avg_score),
                 "summary": summary_result.get("summary", ""),
-                "scores": [qa.get("score_details", {}).get("score", 0) for qa in session.qa_history],
+                "scores": [get_score(qa) for qa in session.qa_history],
                 "average_score": avg_score,
                 "total_questions": len(session.qa_history),
                 "qa_history": session.qa_history,
@@ -538,20 +537,21 @@ class MultiAgentCoordinator:
         turns = self.memory_store.get_session_turns(session_id)
         for turn in turns:
             action = turn.get("action", {})
-            reward = turn.get("reward", {})
-            question_data = action.get("question_data", {})
+            reward = turn.get("reward", {}) or {}
+            question_data = action.get("question_data") or {}
             question_text = action.get("question_text", "")
 
-            session.qa_history.append({
-                "question_data": question_data,
-                "question": question_text,
-                "answer": action.get("answer_text", ""),
-                "question_type": question_data.get("type", "general") if isinstance(question_data, dict) else "general",
-                "difficulty": question_data.get("difficulty", "medium") if isinstance(question_data, dict) else "medium",
-                "score_details": reward,
-                "security_check": action.get("security_check", {}),
-                "timestamp": turn.get("timestamp", datetime.now()),
-            })
+            qa_turn = QATurn(
+                question=question_text,
+                answer=action.get("answer_text", ""),
+                question_type=get_question_type(question_data),
+                difficulty=question_data.get("difficulty", "medium") if isinstance(question_data, dict) else "medium",
+                question_data=question_data,
+                score_details=reward,
+                security_check=action.get("security_check", {}),
+                timestamp=turn.get("timestamp", datetime.now()),
+            )
+            session.qa_history.append(qa_turn.to_dict())
             session.add_score(reward.get("score", 0))
 
         self.active_sessions[session_id] = session
@@ -674,10 +674,8 @@ class MultiAgentCoordinator:
         return tags[:20]  # 限制标签数量
 
     def __del__(self):
-        """析构函数，清理资源"""
+        """析构函数，仅清理会话；MongoClient 由进程级 db.close_mongo_client() 统一释放"""
         try:
             self.cleanup_all_sessions()
-            if hasattr(self.retrieval_system, 'close_connection'):
-                self.retrieval_system.close_connection()
-        except:
+        except Exception:
             pass

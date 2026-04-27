@@ -4,8 +4,94 @@
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-27 | 修复 P0 严重 bug、移除 `interview/views.py`、统一数据结构 / 连接池 / 日志 / JWT、前端 `baseURL` 抽取 |
 | 2026-04-24T15:33:52.266Z | 补充扫描：views.py、users.py、llm.py、rubrics.py、coordinator.py、各 agent、auth store、前端视图组件 |
 | 2026-04-24T15:26:51.503Z | 初始化 AI 上下文文档，添加 Mermaid 结构图、模块索引、面包屑导航 |
+
+---
+
+## 2026-04-27 重构记要
+
+本次围绕「修复严重 bug + 一致性 / 安全」做了一次集中改造，下面把变更分类列出，便于后续 AI / 人 接手。
+
+### A. P0 严重 bug 修复
+
+| # | 位置 | 症状 | 修复 |
+|---|------|------|------|
+| 1 | `interview/agents/scoring_agent.py::evaluate_interview_readiness` | `qa.get("score")` 始终拿不到分数（实际嵌在 `score_details.score`），就绪检查恒为缺失 | 引入 `qa_models.get_score()` 统一读分逻辑，过滤掉 `<=0` 的无效分 |
+| 2 | `interview/agents/question_generator.py::_count_question_types` | 协调器写入 `question_type`，这里读 `type`，类型分布永远空 | 改用 `qa_models.get_question_type()`，兼容 `question_type` 与遗留 `type` |
+| 3 | `interview/agents/summary_agent.py` | `import datetime` 与 `from datetime import datetime` 同时存在，调用 `datetime.datetime.now()` 报 AttributeError；同时存在死代码 `save_comprehensive_interview_result`（违反「协调器统一持久化」约定）和未使用的 `decision` 变量 | 只保留 `from datetime import datetime`；删除 `save_comprehensive_interview_result` 与冗余 MongoDB 初始化；清理未使用变量 |
+| 4 | `interview/agents/security_agent.py` | `is_safe = risk_level == "low" and not detected_issues` 过于激进，medium 警告也会终止面试 | 仅当 `suggested_action == "block"`（高风险/prompt-injection）才设为不安全；medium 退化为 warning |
+| 5 | `interview/agents/security_agent.py` | `max(..., key=lambda x: {...}[x])` 对未知 LLM 输出会 KeyError | 抽出 `_risk_rank` / `_max_risk` 工具函数，未知值回退 low |
+| 6 | `frontend/src/views/FaceToFaceTestView.vue` | 人脸验证完全旁路（`onMounted` 直接置 `isFaceVerified=true`，弹窗永远不出现） | 删除假人脸验证 UI 与状态变量、删除空壳组件 `FaceVerificationDialog.vue`；当前面试不依赖人脸验证 |
+| 7 | `interview/views.py` | `index()` view 缩进错误导致 `SyntaxError: invalid syntax`；与 WebSocket 消费者重复一份过时实现 | 整个 `views.py` 删除；`urls.py` 不再注册 HTTP 面试入口（仅保留用户/简历/结果接口） |
+
+### B. 数据结构统一（P1）
+
+新增 `interview/agents/qa_models.py`：
+
+- `QATurn` dataclass：所有 Q&A 轮次的标准结构（`question / answer / question_type / difficulty / question_data / score_details / security_check / timestamp`）。
+- `get_score(qa)`：从 `score_details.score` 提取分数，兼容遗留顶层 `score` 字段。
+- `get_question_type(qa)`：兼容 `question_type` 与遗留 `type`。
+
+`coordinator.py` 已改用 `QATurn` 构造正常轮次和安全终止轮次，并在重建会话 / 计算分数 / 统计题型时使用 `get_score / get_question_type`，杜绝散落的字段名硬编码。
+
+### C. MongoDB 共享连接池（P1）
+
+新增 `interview/tools/db.py`：
+
+- 模块级单例 `MongoClient`（pymongo 自带连接池）+ 双检锁懒加载。
+- `get_mongo_db()` 返回默认数据库句柄。
+- `close_mongo_client()` 仅在进程退出时调用。
+
+旧实现里 `users.py` 每个 view、`rag_tools.py` `rag_search`、`init.py` 各函数都会 `MongoClient(...) ... client.close()`，已全部替换为共享连接：
+
+- `interview/users.py`：所有 view 改用 `get_mongo_db()`。
+- `interview/tools/rag_tools.py`：`rag_search` 与 `RetrievalSystem` 共享同一 client；`close_connection()` 已删除（连接池由进程统一释放）。
+- `init.py`：通过 `get_mongo_db()` 拿连接，`__main__` 退出时调用 `close_mongo_client()`。
+
+### D. JWT 集中化（P1）
+
+新增 `interview/auth_utils.py`：
+
+- `generate_token(user_id, name, hours)` / `decode_token(token)` 收敛 PyJWT 用法。
+- `extract_token_from_request(request)` 复用 Authorization Bearer 解析。
+- 装饰器 `@jwt_required`：自动校验 token，写入 `request.jwt_payload`，处理 `ExpiredSignatureError` / `InvalidTokenError` / 未知异常并返回 401。
+
+`interview/users.py` 中的 `verify_token / get_user_resume / update_user_resume / get_interview_result` 全部改用装饰器；旧的 `update_interview_result`（仅声明、未注册路由的死代码）一并删除。
+
+### E. 前端 baseURL 抽取（P1）
+
+- 新增 `frontend/src/config.ts`：导出 `API_BASE_URL`（来自 `import.meta.env.VITE_API_BASE_URL`，默认 `http://101.76.218.89:8000`）和 `buildWebSocketUrl(path)` 自动推导 ws/wss。
+- 新增 `frontend/.env.example` 和 `frontend/env.d.ts`（`ImportMetaEnv` 类型声明）。
+- 替换硬编码：
+  - `src/stores/auth.ts` 使用 `API_BASE_URL`。
+  - `src/views/FaceToFaceTestView.vue` 使用 `buildWebSocketUrl`。
+  - `src/views/ResumeRewriterView.vue` 使用 `${API_BASE_URL}` 拼接。
+
+### F. 统一日志配置（P1）
+
+`interview_backend/settings.py` 增加 `LOGGING` 配置：
+
+- 项目命名空间 `interview` 走 `verbose` formatter，级别由 `INTERVIEW_LOG_LEVEL`（默认 `INFO`）控制。
+- 设置 `INTERVIEW_LOG_FILE` 环境变量后追加 `RotatingFileHandler`（10MB × 5）。
+- Django / Daphne 日志保持 `WARNING`，避免噪音。
+- root logger 不再吞掉异常堆栈。
+
+### G. 删除/清理的死代码
+
+- `interview/views.py`（全文件）
+- `interview/agents/summary_agent.py::save_comprehensive_interview_result`、不必要的 MongoDB 初始化
+- `interview/agents/question_generator.py::generate_initial_questions`（未被任何调用方使用）
+- `interview/users.py::update_interview_result`（未注册路由）
+- `interview/tools/rag_tools.py::_get_mongo_client / _get_mongo_collections / RetrievalSystem.close_connection`
+- `frontend/src/views/FaceVerificationDialog.vue`（未真正实现的空壳）
+- 未使用的 `from dotenv import load_dotenv` / `os` 等冗余 import
+
+### H. 校验
+
+- `python -m py_compile` 全部通过：`coordinator.py`、`scoring_agent.py`、`question_generator.py`、`summary_agent.py`、`security_agent.py`、`qa_models.py`、`users.py`、`auth_utils.py`、`tools/db.py`、`tools/rag_tools.py`、`tools/__init__.py`、`init.py`、`interview_backend/settings.py`、`interview/urls.py`。
+- 编辑器静态检查（ReadLints）：上述文件 + 前端 `config.ts`、`stores/auth.ts`、`views/FaceToFaceTestView.vue`、`views/ResumeRewriterView.vue` 全部 0 错误。
 
 ---
 
@@ -17,12 +103,15 @@ AI 驱动的自动化面试平台。候选人通过 WebSocket 实时对话完成
 
 ## 架构概览
 
-### 双通道 API
+### 单通道 API（WebSocket）
+
+> ⚠️ 旧版的 HTTP 面试通道（`interview/views.py` + `_global_coordinator`）已于 2026-04-27 删除。
+> 面试主流程统一走 WebSocket，HTTP 仅保留用户 / 简历 / 结果相关接口。
 
 | 通道 | 入口 | 协调器 | 出题/评分 LLM | 安全/总结 LLM |
 |------|------|--------|--------------|--------------|
 | WebSocket（主） | `consumers.py` | 每连接独立实例 | `chatgpt_model` (gpt-5-mini) | `gemini_model` |
-| HTTP（兼容） | `views.py` | 全局单例 `_global_coordinator` | `kimi_model` | `gemini_model` |
+| HTTP | `users.py` | — | — | — |
 
 WebSocket 端点：`ws://<host>:8000/ws/interview/<chat_id>/`
 
@@ -46,9 +135,12 @@ WebSocket 端点：`ws://<host>:8000/ws/interview/<chat_id>/`
 
 双数据库策略：
 - **SQLite**（Django ORM）：认证、会话、管理后台
-- **MongoDB**：所有业务数据，通过 `RetrievalSystem`（`interview/tools/rag_tools.py`）访问
+- **MongoDB**：所有业务数据，通过 **`interview.tools.db`**（共享 MongoClient 连接池） + `RetrievalSystem`（`interview/tools/rag_tools.py`）访问
 
-MongoDB 集合：`users`、`resumes`、`problem`（知识库 + 1024 维向量）、`result`、`interview_memories`
+> ✅ 2026-04-27 起，所有 MongoDB 访问都必须通过 `interview.tools.db.get_mongo_db()` 拿连接，
+> 不允许在 view / agent 内部新建 `MongoClient` 实例。`RetrievalSystem` 内部也已切到共享池。
+
+MongoDB 集合：`users`、`resumes`、`problem`（知识库 + 1024 维向量）、`result`、`interview_memories`、`conversation_memories`（Memento 三元组）
 
 向量搜索使用阿里云 `text-embedding-v4`，RAG 以 LangChain `@tool` 形式暴露给智能体。
 
@@ -78,11 +170,11 @@ graph TD
 
 | 模块路径 | 语言 | 职责 |
 |---------|------|------|
-| `interview_backend/` | Python | Django 项目配置、ASGI 入口、URL 根路由 |
-| `interview/` | Python | 核心面试应用：视图、消费者、用户管理 |
-| `interview/agents/` | Python | 多智能体系统：协调器、各专项智能体、会话/记忆管理 |
-| `interview/tools/` | Python | RAG 向量检索、MongoDB 统一数据访问层 |
-| `frontend/` | TypeScript/Vue 3 | 前端 SPA：面试界面、结果展示、简历编辑 |
+| `interview_backend/` | Python | Django 项目配置、ASGI 入口、URL 根路由、统一 LOGGING 配置 |
+| `interview/` | Python | 核心面试应用：消费者（WebSocket）、用户管理、JWT 装饰器（`auth_utils.py`） |
+| `interview/agents/` | Python | 多智能体系统：协调器、各专项智能体、会话/记忆管理、`qa_models.py`（QATurn） |
+| `interview/tools/` | Python | RAG 向量检索、MongoDB 共享连接池（`db.py`）、`RetrievalSystem` |
+| `frontend/` | TypeScript/Vue 3 | 前端 SPA：面试界面、结果展示、简历编辑、`config.ts`（API_BASE_URL） |
 
 ---
 
@@ -121,7 +213,17 @@ ALIYUN_API_KEY=...
 ALIYUN_BASE_URL=...
 DOUBAO_API_KEY=...
 DOUBAO_BASE_URL=...
+
+# 可选：日志（settings.py LOGGING）
+INTERVIEW_LOG_LEVEL=INFO          # 项目自身命名空间日志级别（默认 INFO）
+INTERVIEW_LOG_FILE=/path/log.log  # 设置后启用 RotatingFileHandler
 ```
+
+### 前端环境变量（`frontend/.env` / `frontend/.env.local`）
+```bash
+VITE_API_BASE_URL=http://101.76.218.89:8000
+```
+未设置时默认值见 `frontend/src/config.ts`。WebSocket 地址由 `buildWebSocketUrl(path)` 自动从 `API_BASE_URL` 推导。
 
 ---
 
@@ -135,11 +237,15 @@ DOUBAO_BASE_URL=...
 
 ## 编码规范
 
-- Python/TypeScript 均**未配置** linter 或 formatter
-- 所有 MongoDB 操作必须通过 `RetrievalSystem` 进行，不得绕过
-- 协调器负责所有数据持久化，各智能体不得重复保存
-- 所有智能体须实现 `_fix_common_json_issues()` 修复 LLM 输出的 JSON 格式问题
-- `QuestionGeneratorAgent.process()` 只接收 `parsed_profile`，不再接收原始 `resume_data`
+- Python/TypeScript 均**未配置** linter 或 formatter（约定优先于工具）
+- **MongoDB 访问统一走 `interview.tools.db.get_mongo_db()`**；高级业务操作（简历 / 结果 / 记忆 / 知识库）走 `RetrievalSystem`，不得在 view / agent 内部重新 `MongoClient(...)`。
+- **JWT 校验统一通过 `interview.auth_utils.jwt_required` 装饰器**，view 函数直接读 `request.jwt_payload`，不要重复实现 token 解析。
+- **Q&A 历史结构统一为 `QATurn`（`interview/agents/qa_models.py`）**；读分数/题型时使用 `get_score / get_question_type` 助手，避免散落字段名。
+- 协调器负责所有数据持久化，各智能体不得重复保存。
+- 所有智能体须实现 `_fix_common_json_issues()` 修复 LLM 输出的 JSON 格式问题。
+- `QuestionGeneratorAgent.process()` 只接收 `parsed_profile`，不再接收原始 `resume_data`。
+- 前端调用后端：HTTP 用 `import { API_BASE_URL } from '@/config'`，WebSocket 用 `buildWebSocketUrl(path)`，不得硬编码 IP/端口。
+- 安全策略：仅 `suggested_action == "block"`（高风险/prompt-injection）才中断面试；medium 风险只是 warning，继续面试。
 
 ---
 
@@ -159,36 +265,35 @@ DOUBAO_BASE_URL=...
 
 ## AI 使用指南
 
-- 修改智能体逻辑前，先阅读 `interview/agents/CLAUDE.md` 了解各智能体职责边界
-- 新增智能体须继承 `BaseAgent` 并实现 `get_system_prompt()` 和 `process()`
-- 前端硬编码了后端地址 `101.76.218.89:8000`，修改时需同步更新 `stores/auth.ts` 及 `FaceToFaceTestView.vue`
-- 已存根/禁用功能：人脸验证（自动通过）、TTS 音频（已注释）、讯飞 ASR（已实现未接入）、口语测试页（占位符）
+- 修改智能体逻辑前，先阅读 `interview/agents/CLAUDE.md` 了解各智能体职责边界。
+- 新增智能体须继承 `BaseAgent` 并实现 `get_system_prompt()` 和 `process()`。
+- **不要新建 MongoClient**：调用 `from interview.tools.db import get_mongo_db`。
+- **不要重复实现 JWT 校验**：HTTP view 加上 `@jwt_required` 装饰器即可。
+- **前端不要硬编码后端地址**：HTTP 用 `API_BASE_URL`，WebSocket 用 `buildWebSocketUrl(path)`，运行时由 `VITE_API_BASE_URL` 注入。
+- 已存根/禁用功能：人脸验证（已删除假实现，前端无人脸校验）、TTS 音频（已注释）、讯飞 ASR（已实现未接入）、口语测试页（占位符）。
 
 ---
 
-## 扫描覆盖率（截至 2026-04-24T15:33:52.266Z）
+## 扫描覆盖率（截至 2026-04-27）
 
-| 模块 | 已扫描文件 | 覆盖状态 |
-|------|-----------|---------|
-| `interview/views.py` | 已读 | 完整 |
-| `interview/users.py` | 已读 | 完整 |
-| `interview/llm.py` | 已读 | 完整 |
-| `interview/rubrics.py` | 已读 | 完整 |
-| `interview/agents/coordinator.py` | 已读 | 完整 |
-| `interview/agents/question_generator.py` | 已读 | 完整 |
-| `interview/agents/scoring_agent.py` | 已读 | 完整 |
-| `interview/agents/security_agent.py` | 已读 | 完整 |
-| `interview/agents/summary_agent.py` | 已读 | 完整 |
-| `frontend/src/stores/auth.ts` | 已读 | 完整 |
-| `frontend/src/views/FaceToFaceTestView.vue` | 已读（前200行） | 核心逻辑完整 |
-| `frontend/src/views/InterviewResultView.vue` | 已读（前80行） | 模板结构完整 |
-
-尚未扫描（建议下次补充）：
-- `interview/consumers.py`（WebSocket 消费者完整实现）
-- `interview/tools/rag_tools.py`（RetrievalSystem 完整接口）
-- `interview/agents/base_agent.py`（BaseAgent 基类）
-- `interview/agents/resume_parser.py`（ResumeParser 完整实现）
-- `interview/agents/memory.py`（MemoryStore/MemoryRetriever）
-- `interview/agents/session.py`（InterviewSession）
-- `frontend/src/views/ResumeRewriterView.vue`
-- `frontend/src/router/index.ts`
+| 模块 | 状态 |
+|------|------|
+| `interview/views.py` | 🗑️ 已删除（HTTP 面试通道下线） |
+| `interview/users.py` | ♻️ 已重构（共享连接池 + jwt_required） |
+| `interview/auth_utils.py` | ✅ 新增（JWT 集中化） |
+| `interview/tools/db.py` | ✅ 新增（MongoClient 共享连接池） |
+| `interview/tools/rag_tools.py` | ♻️ 已重构（共享连接池） |
+| `interview/agents/qa_models.py` | ✅ 新增（QATurn + 字段助手） |
+| `interview/agents/coordinator.py` | ♻️ 已重构（QATurn / get_score / get_question_type / 安全检查策略） |
+| `interview/agents/scoring_agent.py` | ♻️ 修复（评分字段路径） |
+| `interview/agents/question_generator.py` | ♻️ 修复（题型字段一致性 + 删除死代码） |
+| `interview/agents/summary_agent.py` | ♻️ 修复（datetime 冲突 + 删除死代码） |
+| `interview/agents/security_agent.py` | ♻️ 修复（KeyError 保护 + 终止策略） |
+| `interview_backend/settings.py` | ♻️ 增加 LOGGING 统一配置 |
+| `init.py` | ♻️ 切换到共享连接池 |
+| `frontend/src/config.ts` | ✅ 新增 |
+| `frontend/.env.example` / `frontend/env.d.ts` | ✅ 新增 |
+| `frontend/src/stores/auth.ts` | ♻️ 使用 API_BASE_URL |
+| `frontend/src/views/FaceToFaceTestView.vue` | ♻️ 删除人脸验证旁路 + 使用 buildWebSocketUrl |
+| `frontend/src/views/ResumeRewriterView.vue` | ♻️ 使用 API_BASE_URL |
+| `frontend/src/views/FaceVerificationDialog.vue` | 🗑️ 已删除 |

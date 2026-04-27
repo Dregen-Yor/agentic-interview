@@ -148,3 +148,73 @@ STATIC_URL = 'static/'  # 静态文件URL前缀
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'  # 大整数自动字段
+
+
+# ====================================================================
+# 统一日志配置
+# ====================================================================
+# 设计目标：
+# 1. 项目内所有模块通过 logging.getLogger("interview.xxx") 获取 logger，
+#    继承同一份 formatter / handler，避免散落 print + logger 双轨。
+# 2. 默认输出到控制台；通过环境变量 INTERVIEW_LOG_FILE 可启用文件 handler。
+# 3. INTERVIEW_LOG_LEVEL 控制项目自身（"interview" 命名空间）的日志级别，
+#    Django/库的日志保持 WARNING，避免噪音。
+# ====================================================================
+LOG_LEVEL = os.getenv("INTERVIEW_LOG_LEVEL", "INFO").upper()
+LOG_FILE = os.getenv("INTERVIEW_LOG_FILE")
+
+_log_handlers = {
+    "console": {
+        "class": "logging.StreamHandler",
+        "formatter": "verbose",
+        "level": LOG_LEVEL,
+    },
+}
+
+if LOG_FILE:
+    _log_handlers["file"] = {
+        "class": "logging.handlers.RotatingFileHandler",
+        "filename": LOG_FILE,
+        "maxBytes": 10 * 1024 * 1024,
+        "backupCount": 5,
+        "formatter": "verbose",
+        "level": LOG_LEVEL,
+        "encoding": "utf-8",
+    }
+
+_app_handlers = ["console"] + (["file"] if LOG_FILE else [])
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        },
+    },
+    "handlers": _log_handlers,
+    "loggers": {
+        # 项目自身命名空间
+        "interview": {
+            "handlers": _app_handlers,
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        # Django 框架日志
+        "django": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        # Channels / Daphne 日志
+        "daphne": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "WARNING",
+    },
+}

@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia';
 import axios from 'axios';
+import { API_BASE_URL } from '@/config';
 
-// 创建axios实例并配置基础设置
 const apiClient = axios.create({
-    baseURL: 'http://101.76.218.89:8000',
+    baseURL: API_BASE_URL,
     headers: {
         'Content-Type': 'application/json',
     }

@@ -4,9 +4,6 @@ Summarizes the interview process and makes final decisions
 """
 
 import json
-import os
-import datetime
-import pymongo
 import logging
 from typing import Dict, Any, List
 from datetime import datetime
@@ -15,23 +12,11 @@ from .base_agent import BaseAgent
 
 
 class SummaryAgent(BaseAgent):
-    """Summary Agent"""
+    """Summary Agent — 仅负责生成总结，不直接持久化（由协调器统一保存）"""
 
     def __init__(self, model):
         super().__init__(model, "SummaryAgent")
         self.logger = logging.getLogger("interview.agents.summary_agent")
-
-        # MongoDB connection initialization
-        try:
-            self.client = pymongo.MongoClient(os.getenv("MONGODB_URI"))
-            self.db = self.client[os.getenv("MONGODB_DB")]
-            self.result_collection = self.db["result"]
-            self.logger.info("SummaryAgent: MongoDB connection successful")
-        except Exception as e:
-            self.logger.error(f"SummaryAgent: MongoDB connection failed: {e}")
-            self.client = None
-            self.db = None
-            self.result_collection = None
 
         self.system_prompt = """
 You are an interview summary expert for a university's advanced computer science class (research track). The interviewees are first-year university students. The evaluation should focus on mathematical and logical foundations, while also considering basic qualities and interpersonal skills, with an emphasis on identifying research potential.
@@ -309,15 +294,12 @@ All outputs must be in Chinese.
     def _generate_fallback_summary(self, candidate_name: str, average_score: float,
                                   qa_history: List[Dict[str, Any]], raw_response: str) -> Dict[str, Any]:
         """生成备用总结（当JSON解析失败时）"""
-        decision = self._make_decision_by_score(average_score)
-
-        # 从原始响应中提取有意义的总结文本
         summary_text = self._extract_summary_from_raw_response(raw_response)
 
         return {
             "candidate_name": candidate_name,
             "final_grade": self._score_to_grade(average_score),
-            "final_decision": decision,
+            "final_decision": self._make_decision_by_score(average_score),
             "overall_score": round(average_score, 1),
             "summary": summary_text,
             "strengths": [],
@@ -363,49 +345,6 @@ All outputs must be in Chinese.
             "generated_at": datetime.now().isoformat(),
             "error": "SummaryAgent processing error"
         }
-
-    def save_comprehensive_interview_result(self, summary_result: Dict[str, Any]) -> str:
-        """
-        保存完整的面试总结结果到数据库
-
-        Args:
-            summary_result (Dict[str, Any]): 完整的面试总结结果
-
-        Returns:
-            str: 操作结果信息
-        """
-        if self.result_collection is None:
-            error_msg = "数据库连接未建立，无法保存面试结果"
-            self.logger.error(f"Error: {error_msg}")
-            return error_msg
-
-        try:
-            # 构建完整的面试记录
-            interview_record = {
-                "candidate_name": summary_result.get("candidate_name", ""),
-                "final_decision": summary_result.get("final_decision", ""),
-                "overall_score": summary_result.get("overall_score", 0),
-                "summary": summary_result.get("summary", ""),
-                "strengths": summary_result.get("strengths", []),
-                "weaknesses": summary_result.get("weaknesses", []),
-                "recommendations": summary_result.get("recommendations", {}),
-                "confidence_level": summary_result.get("confidence_level", ""),
-                "detailed_analysis": summary_result.get("detailed_analysis", {}),
-                "generated_at": summary_result.get("generated_at", ""),
-                "timestamp": datetime.datetime.now(),
-                "processed_by": "SummaryAgent",
-                "database_save_status": summary_result.get("database_save_status", "")
-            }
-
-            result_insert = self.result_collection.insert_one(interview_record)
-            self.logger.info(f"完整面试总结已保存到数据库，记录ID: {result_insert.inserted_id}")
-
-            return f"面试总结已成功记录到数据库。记录ID: {result_insert.inserted_id}"
-
-        except Exception as e:
-            error_msg = f"保存完整面试总结时发生错误: {str(e)}"
-            self.logger.error(f"Error: {error_msg}")
-            return error_msg
 
     def _fix_common_json_issues(self, response: str) -> str:
         """

@@ -8,7 +8,7 @@
 
 ## 智能体一览
 
-| 类 | 文件 | 职责 |
+| 类 / 模块 | 文件 | 职责 |
 |----|------|------|
 | `MultiAgentCoordinator` | `coordinator.py` | 编排整个面试流水线，持有所有数据持久化逻辑 |
 | `ResumeParser` | `resume_parser.py` | 面试开始时一次性解析简历 → `structured_profile` |
@@ -19,6 +19,10 @@
 | `BaseAgent` | `base_agent.py` | 抽象基类，定义 `get_system_prompt()` / `process()` 接口 |
 | `InterviewSession` | `session.py` | 会话状态容器，缓存 `parsed_profile` |
 | `MemoryStore` / `MemoryRetriever` | `memory.py` | Q&A 记忆存取（Memento 模式） |
+| `QATurn` + `get_score / get_question_type` | `qa_models.py` | Q&A 轮次的统一数据结构与字段读取助手 |
+
+> ✅ **2026-04-27 起**：所有 Q&A 历史的构造和读取都应通过 `qa_models` 模块；
+> 直接读 `qa["score"]` / `qa["type"]` 已废弃，请使用 `get_score(qa)` / `get_question_type(qa)`。
 
 ## MultiAgentCoordinator（`coordinator.py`）
 
@@ -62,7 +66,7 @@ MultiAgentCoordinator(models: Dict[str, Any])
 
 - 强制终止：`total_questions >= 6`
 - 提前终止：`total_questions >= 4` 且评分满足 readiness 条件（avg≥7 且 60%高分，或 avg≤4 或 50%低分，或 total≥5）
-- 安全终止：任意轮次检测到 `risk_level=high` 或 `suggested_action=block`
+- 安全终止：仅当 `suggested_action == "block"` 或 `risk_level == "high"`（2026-04-27 收紧策略，medium 级别仅作为 warning，不再中断面试）
 
 ## QuestionGeneratorAgent（`question_generator.py`）
 
@@ -93,9 +97,11 @@ MultiAgentCoordinator(models: Dict[str, Any])
 ### 关键逻辑
 
 - 题型上限：每种类型最多 2 题，超限后 prompt 中明确禁止该类型
+- 题型统计：`_count_question_types()` 通过 `qa_models.get_question_type()` 读取，兼容 `question_type` 与遗留 `type`
 - RAG 工具调用：`_invoke_with_tools()` 允许 LLM 自主决定是否调用 `rag_search`，最多循环 4 次
 - 简历锚定：`_format_profile_for_prompt()` 将 `parsed_profile` 格式化注入，弱维度优先出题
 - `math_logic` 阶段优先：`current_score < 6` 时难度 easy-medium，否则 medium-hard
+- 已删除：未被任何调用方使用的 `generate_initial_questions()` 死代码
 
 ## ScoringAgent（`scoring_agent.py`）
 
@@ -125,7 +131,7 @@ MultiAgentCoordinator(models: Dict[str, Any])
 - 无有效解答（仅讨论无结论）→ 直接给 0 分
 - 正确答案至少 8 分，剩余分按过程质量给
 - `_score_to_letter()`：≥9→A，≥7→B，≥5→C，<5→D
-- `evaluate_interview_readiness(qa_history, min_questions=4)`：判断是否可提前结束
+- `evaluate_interview_readiness(qa_history, min_questions=4)`：通过 `qa_models.get_score()` 读取分数（修复了原先误读 `qa["score"]` 导致 readiness 永远不满足的 bug）；过滤掉 0 分的轮次再做平均计算
 
 ## SecurityAgent（`security_agent.py`）
 
@@ -152,6 +158,14 @@ MultiAgentCoordinator(models: Dict[str, Any])
 - 声称网络/系统问题要求直接给分 → 默认 high 风险
 - 数学公式/逻辑符号不判为高风险
 - `analyze_session_security(qa_history)`：会话级汇总，high 告警数 >0 → overall_risk=high
+
+### 风险分级（2026-04-27 修订）
+
+- 内部统一使用 `_risk_rank` / `_max_risk` 工具函数，未知 LLM 输出回退到 `low`，避免 KeyError。
+- **终止策略收紧**：
+  - `suggested_action == "block"` 或 `risk_level == "high"` → 终止面试（`is_safe = False`）。
+  - `medium` 级别仅作为 warning，前端展示提醒，但面试继续。
+  - `low` 视为安全。
 
 ## SummaryAgent（`summary_agent.py`）
 
@@ -194,8 +208,7 @@ MultiAgentCoordinator(models: Dict[str, Any])
 
 - `_validate_summary_result()`：强制等级与分数区间一致（以分数区间为准），`_decision_by_grade()`：A→accept，B→conditional，C/D→reject
 - 数据持久化由协调器统一调用 `retrieval_system.save_interview_result()`，SummaryAgent 自身不保存
-- `save_comprehensive_interview_result()` 方法存在但当前流程中未被协调器调用（遗留方法）
-- 自带 MongoDB 连接（`result` 集合），但实际写入路径走 `RetrievalSystem`
+- 2026-04-27 清理：移除冗余的 `import datetime` 与 `from datetime import datetime` 命名冲突；删除 `save_comprehensive_interview_result` 死方法及自带的 MongoDB 客户端初始化（违反「协调器统一持久化」约定）；清理 `_generate_fallback_summary` 中未使用的 `decision` 局部变量
 
 ## BaseAgent（`base_agent.py`）
 
@@ -337,13 +350,14 @@ coordinator.process_answer()
 
 ## 相关文件
 
-- `coordinator.py` — 流水线编排与数据持久化
+- `coordinator.py` — 流水线编排与数据持久化（2026-04-27 已切到 QATurn / get_score / get_question_type）
 - `base_agent.py` — 抽象基类 + `InterviewState`
 - `resume_parser.py` — 简历解析（非 BaseAgent 子类）
-- `question_generator.py` — 出题智能体（含 RAG 工具调用，最多 4 次循环）
-- `scoring_agent.py` — 评分智能体
-- `security_agent.py` — 安全检测智能体（正则 + LLM 双层）
-- `summary_agent.py` — 总结智能体（不自行持久化）
+- `question_generator.py` — 出题智能体（含 RAG 工具调用，最多 4 次循环；题型字段统一）
+- `scoring_agent.py` — 评分智能体（已修复评分字段读取 bug）
+- `security_agent.py` — 安全检测智能体（KeyError 保护 + 终止策略收紧）
+- `summary_agent.py` — 总结智能体（不自行持久化；移除 datetime 冲突与死代码）
+- `qa_models.py` — Q&A 轮次统一数据结构（`QATurn`）与字段助手
 - `session.py` — 会话状态
 - `memory.py` — Memento 记忆管理
 
@@ -351,5 +365,6 @@ coordinator.process_answer()
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-27 | 修复 P0：scoring 字段路径、question_generator 题型一致性、summary datetime 冲突、security 过激/KeyError；新增 `qa_models.py` 统一 Q&A 结构；coordinator 切到 QATurn |
 | 2026-04-24T15:33:52.266Z | 补充各 agent 详细接口、输入输出、coordinator 流水线、终止条件 |
 | 2026-04-24T15:26:51.503Z | 初始化模块文档 |

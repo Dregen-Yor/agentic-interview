@@ -52,10 +52,24 @@ Pinia store，id 为 `auth`。
 
 ### axios 实例
 
-- `baseURL`：硬编码 `http://101.76.218.89:8000`
+- `baseURL`：来自 `import { API_BASE_URL } from '@/config'`，背后通过 `VITE_API_BASE_URL` 环境变量注入；默认值仍为 `http://101.76.218.89:8000`（保持向后兼容）
 - 请求拦截器：自动从 `localStorage['user-token']` 读取并附加 `Authorization: Bearer <token>`
 - 登录成功后同时更新 `apiClient.defaults.headers.common['Authorization']`
 - 登出时 `delete apiClient.defaults.headers.common['Authorization']`
+
+### `src/config.ts`（2026-04-27 新增）
+
+```ts
+import { API_BASE_URL, buildWebSocketUrl } from '@/config';
+
+axios.get(`${API_BASE_URL}/api/resume/`, { headers });
+const ws = new WebSocket(buildWebSocketUrl(`/ws/interview/${chatId}/`));
+```
+
+- `API_BASE_URL` 自动从 `import.meta.env.VITE_API_BASE_URL` 读取，未设置时回退到默认值。
+- `buildWebSocketUrl(path)` 自动从 `API_BASE_URL` 推导 ws/wss 协议（页面是 https 时强制 wss）和 host。
+- 类型声明在 `frontend/env.d.ts` 中扩展 `ImportMetaEnv`。
+- 示例文件 `frontend/.env.example`，本地用 `frontend/.env.local` 覆盖即可。
 
 ## 主要视图组件
 
@@ -63,10 +77,10 @@ Pinia store，id 为 `auth`。
 
 WebSocket 驱动的面试交互页面。
 
-关键状态：`showStartButton`、`showAnswerButton`、`isRecording`、`isProcessing`、`isPlaying`、`isCompleted`、`isFaceVerified`、`backendResponseText`、`transcribedText`
+关键状态：`showStartButton`、`showAnswerButton`、`isRecording`、`isProcessing`、`isPlaying`、`isCompleted`、`backendResponseText`、`transcribedText`
 
 WebSocket 连接：
-- URL：`ws://101.76.218.89:8000/ws/interview/<nanoid生成的chatId>/`（硬编码）
+- URL：通过 `buildWebSocketUrl(`/ws/interview/${chatId}/`)` 动态构造，由 `VITE_API_BASE_URL` 决定 host（2026-04-27 起不再硬编码）
 - 连接建立后立即发送 `{username: localStorage['username'], message: '你好'}`
 - 收到 `data.type === 'message'` 时调用 `handleBackendTextResponse()`
 - `data.status === 'completed'` → `isCompleted=true` → 关闭连接 → 2秒后 `window.location.reload()`
@@ -78,9 +92,9 @@ UI 状态机：
 - 播放回答：Lottie 说话动画
 - 完成：显示"再见！"
 
-已禁用功能（代码注释中）：
-- Web Speech API 语音识别（`SpeechRecognition`）已注释
-- 人脸验证组件 `FaceVerificationDialog` 存在但自动通过
+已禁用 / 已删除功能：
+- Web Speech API 语音识别（`SpeechRecognition`）：代码注释中
+- 人脸验证：2026-04-27 删除假实现（原本旁路自动通过）和空壳组件 `FaceVerificationDialog.vue`，当前面试不再要求人脸校验
 
 ### InterviewResultView.vue（面试结果页）
 
@@ -97,7 +111,7 @@ UI 状态机：
 
 | 功能 | 状态 |
 |------|------|
-| 人脸验证 | 自动通过（存根） |
+| 人脸验证 | 已删除（不再有占位 UI） |
 | TTS 音频 | 代码已注释 |
 | 讯飞 ASR | `utils/xfyun-asr.ts` 已实现，未接入 |
 | Web Speech API | `onMounted` 中已注释 |
@@ -105,7 +119,7 @@ UI 状态机：
 
 ## 已知问题
 
-后端地址 `101.76.218.89:8000` 硬编码于 `stores/auth.ts` 及 `FaceToFaceTestView.vue`，修改时需全局替换。
+无。后端地址硬编码已于 2026-04-27 通过 `frontend/src/config.ts` + `VITE_API_BASE_URL` 抽取，HTTP/WebSocket 访问统一从该模块读取。
 
 ## 开发命令
 
@@ -119,12 +133,14 @@ npm run test:unit  # Vitest
 
 ## 相关文件
 
+- `src/config.ts` — `API_BASE_URL` + `buildWebSocketUrl(path)`（2026-04-27 新增）
+- `env.d.ts` — `ImportMetaEnv` 类型声明
+- `.env.example` — 环境变量示例
 - `src/router/index.ts` — 路由配置与导航守卫
-- `src/stores/auth.ts` — JWT 认证状态（Pinia，含 axios 实例）
-- `src/views/FaceToFaceTestView.vue` — 主面试界面（WebSocket + Lottie 动画）
+- `src/stores/auth.ts` — JWT 认证状态（Pinia，含 axios 实例，已切到 `API_BASE_URL`）
+- `src/views/FaceToFaceTestView.vue` — 主面试界面（已切到 `buildWebSocketUrl`，移除人脸验证旁路）
 - `src/views/InterviewResultView.vue` — 结果展示（5 维度分析）
-- `src/views/ResumeRewriterView.vue` — 简历编辑
-- `src/views/FaceVerificationDialog.vue` — 人脸验证对话框（自动通过）
+- `src/views/ResumeRewriterView.vue` — 简历编辑（已切到 `API_BASE_URL`）
 - `src/utils/xfyun-asr.ts` — 讯飞 ASR（未接入）
 - `package.json` — 依赖与脚本
 
@@ -132,5 +148,6 @@ npm run test:unit  # Vitest
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-27 | 新增 `config.ts` 抽取 baseURL；删除人脸验证旁路与 `FaceVerificationDialog.vue`；3 个视图组件切到 `API_BASE_URL` / `buildWebSocketUrl` |
 | 2026-04-24T15:33:52.266Z | 补充 auth store 详细说明、FaceToFaceTestView/InterviewResultView 组件分析 |
 | 2026-04-24T15:26:51.503Z | 初始化模块文档 |

@@ -4,33 +4,20 @@
 
 ## 模块职责
 
-核心面试应用。包含 HTTP 视图、WebSocket 消费者、用户管理 API、URL 路由，以及对 `agents` 和 `tools` 子模块的编排。
+核心面试应用。包含 WebSocket 消费者、用户/简历/结果管理 API、URL 路由、JWT 工具，以及对 `agents` 和 `tools` 子模块的编排。
+
+> ⚠️ 2026-04-27 起，旧版 HTTP 面试通道（`views.py`、`/api/`、`/api/interview/status/`、`/api/interview/end/`）已彻底删除，面试主流程仅通过 WebSocket 进行。
 
 ## 入口与启动
 
 - WebSocket 入口：`consumers.py` → `InterviewConsumer`（每连接独立协调器实例）
-- HTTP 入口：`views.py` → 全局单例 `_global_coordinator`
+- HTTP 入口：`users.py` → 仅保留用户/简历/结果接口
 - URL 配置：`urls.py`
+- JWT 工具：`auth_utils.py`（`generate_token / decode_token / extract_token_from_request / @jwt_required`）
 
 ## 外部接口
 
-### 面试 API（`views.py`）
-
-| 方法 | 路径 | 函数 | 说明 |
-|------|------|------|------|
-| POST | `/api/` | `index` | 启动面试（含 `candidate_name`）或处理回答（含 `message`） |
-| GET | `/api/interview/status/` | `get_interview_status` | 获取当前会话状态 |
-| POST | `/api/interview/end/` | `end_interview` | 手动结束面试，清理会话 |
-
-`views.py` 关键细节：
-- 全局单例 `_global_coordinator`，通过 `get_coordinator()` 懒初始化
-- HTTP 通道使用 `kimi_model` 出题/评分，`gemini_model` 做安全检测和总结
-- 会话 ID 格式：`http_session_<8位hex>`，存于 Django session
-- POST `/api/` 响应字段：`response`、`score`、`current_average`、`total_questions`、`question_type`、`security_warning`
-- 面试完成响应额外含：`interview_complete`、`final_decision`、`overall_score`、`summary`
-- 安全阻断时返回 HTTP 400，含 `security_alert: true`
-
-### 用户 API（`users.py`）
+### 用户与简历 API（`users.py`）
 
 | 方法 | 路径 | 函数 | 认证 | 说明 |
 |------|------|------|------|------|
@@ -39,18 +26,19 @@
 | POST | `/api/verify/` | `verify_token` | Bearer JWT | 验证 token，返回 `user_id` |
 | GET | `/api/resume/` | `get_user_resume` | Bearer JWT | 获取简历 `content` 字段 |
 | POST | `/api/resume/update/` | `update_user_resume` | Bearer JWT | 更新简历，body: `{content: ...}` |
-| GET | `/api/result/` | `get_interview_result` | Bearer JWT | 获取最新面试结果（按 `timestamp` 降序） |
-| POST | `/api/result/update/` | `update_interview_result` | Bearer JWT | 更新面试结果 |
+| GET | `/api/result/` | `get_interview_result` | Bearer JWT | 获取最新面试结果（按 `timestamp` 降序，兼容 `candidate_name` / `name`） |
 
-`users.py` 关键细节：
+`users.py` 关键细节（2026-04-27 重构后）：
 - 密码使用 Django `make_password` / `check_password` 哈希存储
-- JWT payload：`{user_id, name, exp}`，使用 `settings.SECRET_KEY` + HS256
-- MongoDB 直连（每次请求新建连接，用完关闭）：`users` 集合存用户，`resumes` 集合以 `_id = user_id` 关联
-- `get_interview_result` 兼容 `candidate_name` 和 `name` 两个字段名
+- 登录成功后通过 `interview.auth_utils.generate_token(user_id, name)` 颁发 JWT，payload：`{user_id, name, exp}`，HS256，过期 1h
+- 所有需要鉴权的 view 使用 `@jwt_required` 装饰器，view 函数内直接读 `request.jwt_payload`
+- MongoDB 全部走 `interview.tools.db.get_mongo_db()` 共享连接池，**不再每次请求 new MongoClient**
+- `get_interview_result` 自动把 `_id` 转字符串，`timestamp` 转 ISO 8601
 
 ### WebSocket
 
 - 端点：`ws://<host>:8000/ws/interview/<chat_id>/`
+- 客户端端通过 `frontend/src/config.ts::buildWebSocketUrl(path)` 自动推导 ws/wss 与 host
 - 消息类型：`message`、`security_termination`、`security_warning`、`error`
 
 ## WebSocket 消息流（`consumers.py`）
@@ -59,6 +47,21 @@
 2. 首条消息含 `username` → 触发 `start_interview()`
 3. 后续消息含 `message` → 触发 `process_answer()`
 4. 面试完成或安全违规 → 延迟 2-3s 后关闭连接
+
+## JWT 鉴权约定（`auth_utils.py`）
+
+```python
+from interview.auth_utils import jwt_required
+
+@jwt_required
+def some_view(request):
+    user_id = request.jwt_payload["user_id"]
+    name = request.jwt_payload["name"]
+    ...
+```
+
+- 缺失 / 格式错误 / 过期 / 非法 token 一律返回 401，且不会泄露原始异常细节。
+- `verify_token` view 仍是公开的健康检查入口，但内部也走同一装饰器，避免逻辑重复。
 
 ## LLM 模型（`llm.py`）
 
@@ -88,20 +91,21 @@
 
 ## 数据模型
 
-`models.py` 故意留空。所有业务数据存 MongoDB，通过 `tools/rag_tools.py` 的 `RetrievalSystem` 访问。
+`models.py` 故意留空。所有业务数据存 MongoDB，通过 `tools/rag_tools.py` 的 `RetrievalSystem` 访问；底层连接由 `tools/db.py` 提供共享 MongoClient。
 
 ## 测试与质量
 
 - `tests.py` 存在但为空，无任何测试覆盖
-- 无 linter/formatter 配置
+- 无 linter/formatter 配置（约定优先于工具）
+- 项目自身命名空间 `interview.*` 走 `settings.LOGGING` 中统一的 `verbose` formatter，级别由 `INTERVIEW_LOG_LEVEL` 控制
 
 ## 相关文件
 
 - `consumers.py` — WebSocket 消费者
-- `views.py` — HTTP 视图（全局单例协调器）
 - `users.py` — 用户管理 API（注册/登录/JWT/简历/结果）
-- `urls.py` — URL 路由
-- `llm.py` — LLM 模型实例（5个模型）
+- `auth_utils.py` — JWT 工具与 `@jwt_required` 装饰器
+- `urls.py` — URL 路由（HTTP 仅保留用户/简历/结果）
+- `llm.py` — LLM 模型实例（5 个模型）
 - `rubrics.py` — 评分维度数据定义（LOW/MEDIUM/HIGH）
 - `models.py` — 空（占位）
 - `tests.py` — 空（占位）
@@ -110,5 +114,6 @@
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-27 | 删除 `views.py`、新增 `auth_utils.py`、`users.py` 切到共享连接池 + `@jwt_required`、文档同步更新 |
 | 2026-04-24T15:33:52.266Z | 补充 views.py、users.py、llm.py、rubrics.py 详细说明 |
 | 2026-04-24T15:26:51.503Z | 初始化模块文档 |

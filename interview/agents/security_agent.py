@@ -10,6 +10,24 @@ from typing import Dict, Any, List
 from langchain_core.messages import SystemMessage, HumanMessage
 from .base_agent import BaseAgent
 
+# 风险等级权重表（统一供 max() 使用，未知等级回退到 1）
+_RISK_RANK = {"low": 1, "medium": 2, "high": 3}
+
+
+def _risk_rank(level: Any) -> int:
+    """安全地将风险等级字符串映射为权重，未知值返回 1（low）"""
+    if not isinstance(level, str):
+        return 1
+    return _RISK_RANK.get(level.strip().lower(), 1)
+
+
+def _max_risk(*levels: Any) -> str:
+    """返回最高风险等级；若全部未知则返回 'low'"""
+    valid = [lv for lv in levels if isinstance(lv, str) and lv.strip().lower() in _RISK_RANK]
+    if not valid:
+        return "low"
+    return max(valid, key=_risk_rank).strip().lower()
+
 
 class SecurityAgent(BaseAgent):
     """安全检测智能体"""
@@ -144,15 +162,26 @@ All outputs must be in Chinese.
                 fixed_response = self._fix_common_json_issues(response)
                 result = json.loads(fixed_response)
                 
-                # 合并快速检测和深度分析的结果
+                # 合并快速检测和深度分析的结果（合并后重新评估 is_safe / suggested_action）
                 if quick_check["detected_issues"]:
                     result["detected_issues"] = list(set(
                         result.get("detected_issues", []) + quick_check["detected_issues"]
                     ))
-                    result["risk_level"] = max(result.get("risk_level", "low"), 
-                                             quick_check["risk_level"],
-                                             key=lambda x: {"low": 1, "medium": 2, "high": 3}[x])
-                
+                    result["risk_level"] = _max_risk(
+                        result.get("risk_level", "low"),
+                        quick_check.get("risk_level", "low"),
+                    )
+
+                # 标准化 risk_level 字段，避免 LLM 返回非预期值
+                result["risk_level"] = _max_risk(result.get("risk_level", "low"))
+
+                # 重新计算 suggested_action / is_safe，仅在 'block' 时才视为不安全
+                # 中等风险只是 'warning'，不应中断面试
+                result["suggested_action"] = self._get_suggested_action(
+                    result["risk_level"], result.get("detected_issues", [])
+                )
+                result["is_safe"] = result["suggested_action"] != "block"
+
                 return result
                 
             except (json.JSONDecodeError, ValueError) as e:
@@ -229,30 +258,29 @@ All outputs must be in Chinese.
         for keyword in self.suspicious_keywords:
             if keyword.lower() in user_input_lower:
                 detected_issues.append("suspicious_keyword")
-                risk_level = max(risk_level, "medium", 
-                               key=lambda x: {"low": 1, "medium": 2, "high": 3}[x])
-        
+                risk_level = _max_risk(risk_level, "medium")
+
         # 检测特殊字符模式（可能的编码攻击）
         special_char_ratio = len([c for c in user_input if not c.isalnum() and c not in ' .,!?;:']) / max(len(user_input), 1)
         if special_char_ratio > 0.3:
             detected_issues.append("unusual_characters")
-            risk_level = max(risk_level, "medium", 
-                           key=lambda x: {"low": 1, "medium": 2, "high": 3}[x])
-        
+            risk_level = _max_risk(risk_level, "medium")
+
         # 检测过长输入（可能的缓冲区溢出尝试）
         if len(user_input) > 2000:
             detected_issues.append("excessive_length")
-            risk_level = max(risk_level, "medium", 
-                           key=lambda x: {"low": 1, "medium": 2, "high": 3}[x])
-        
-        is_safe = risk_level == "low" and not detected_issues
-        
+            risk_level = _max_risk(risk_level, "medium")
+
+        suggested_action = self._get_suggested_action(risk_level, detected_issues)
+        # 仅在 block 时视为不安全；medium 级别只是 warning，不应中断面试
+        is_safe = suggested_action != "block"
+
         return {
             "is_safe": is_safe,
             "risk_level": risk_level,
             "detected_issues": detected_issues,
             "reasoning": f"快速检测发现的问题: {detected_issues}" if detected_issues else "快速检测未发现明显问题",
-            "suggested_action": self._get_suggested_action(risk_level, detected_issues)
+            "suggested_action": suggested_action,
         }
     
     def _get_suggested_action(self, risk_level: str, detected_issues: List[str]) -> str:

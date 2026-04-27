@@ -1,7 +1,5 @@
 <template>
   <div>
-    <!-- 人脸识别对话框 -->
-    <FaceVerificationDialog v-if="!isFaceVerified" @verification-success="handleVerificationSuccess" />
     <div style="text-align: center; position: fixed; top: 20%; left: 50%; transform: translate(-50%, -50%)">
       <!-- 开始面试按钮 -->
       <button
@@ -75,12 +73,10 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import { Vue3Lottie } from 'vue3-lottie';
 import { nanoid } from 'nanoid';
-// import axios from 'axios'; // No longer needed
+import { buildWebSocketUrl } from '@/config';
 import talkingAnimation from '@/assets/animations/talking-animation.json';
 import thinkingAnimation from '@/assets/animations/think-animation.json';
 import microphoneAnimation from '@/assets/animations/microphone-animation.json';
-import FaceVerificationDialog from './FaceVerificationDialog.vue';
-
 const showStartButton = ref(true);
 const showAnswerButton = ref(false);
 const isRecording = ref(false);
@@ -92,15 +88,12 @@ const socket = ref<WebSocket | null>(null);
 const lottieRef = ref();
 const isPlaying = ref(false);
 const isCompleted = ref(false);
-const isFaceVerified = ref(false);
 const backendResponseText = ref('');
 const speechErrorText = ref('');
 
 // --- WebSocket Connection ---
 const connectWebSocket = () => {
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  // Assuming backend runs on the same host but port 8000
-  const wsUrl = `${wsProtocol}//101.76.218.89:8000/ws/interview/${chatId.value}/`;
+  const wsUrl = buildWebSocketUrl(`/ws/interview/${chatId.value}/`);
 
   socket.value = new WebSocket(wsUrl);
 
@@ -199,8 +192,6 @@ onMounted(() => {
   // } else {
   //   console.error('Speech recognition not supported in this browser.');
   // }
-
-  isFaceVerified.value = true;
 });
 
 onUnmounted(() => {
@@ -208,10 +199,6 @@ onUnmounted(() => {
     socket.value.close();
   }
 });
-
-const handleVerificationSuccess = () => {
-  isFaceVerified.value = true;
-};
 
 const handleBackendTextResponse = (data: { response: string }) => {
   backendResponseText.value = data.response;
@@ -228,12 +215,10 @@ const handleBackendTextResponse = (data: { response: string }) => {
 };
 
 const startInterview = async () => {
-  if (!isFaceVerified.value) return;
-
   showStartButton.value = false;
   isRecording.value = false;
   isProcessing.value = true;
-  
+
   connectWebSocket();
 };
 

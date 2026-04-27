@@ -1,16 +1,16 @@
 import json
-from pymongo import MongoClient
-from dotenv import load_dotenv
 import os
+
 import requests
-from tqdm import tqdm
+from dotenv import load_dotenv
 from openai import OpenAI
+from tqdm import tqdm
 
 load_dotenv()
 
-# MongoDB connection settings
-MONGO_URI = os.getenv("MONGODB_URI")
-DB_NAME = os.getenv("MONGODB_DB")
+# 复用项目级共享 MongoClient（连接池）
+from interview.tools.db import close_mongo_client, get_mongo_db
+
 COLLECTION_NAME = "problem"
 
 # Path to the data file
@@ -52,13 +52,10 @@ def load_data_to_mongodb():
     Loads data from a JSONL file into a MongoDB collection, generating embeddings,
     starting from a specific ID without clearing the collection.
     """
-    client = None
     start_id = "prob_171"
     processing_started = False
     try:
-        # Establish a connection to MongoDB
-        client = MongoClient(MONGO_URI)
-        db = client[DB_NAME]
+        db = get_mongo_db()
         collection = db[COLLECTION_NAME]
 
         # We are continuing an existing process, so we do not clear the collection.
@@ -110,21 +107,15 @@ def load_data_to_mongodb():
 
     except Exception as e:
         print(f"An error occurred: {e}")
-    finally:
-        if client:
-            client.close()
-            print("MongoDB connection closed after data loading.")
 
 
 def create_vector_index():
     """
     Creates a vector search index on the 'content_vector' field.
     """
-    client = None
     try:
         print("Connecting to MongoDB to create vector index...")
-        client = MongoClient(MONGO_URI)
-        db = client[DB_NAME]
+        db = get_mongo_db()
 
         index_model = {
             "fields": [
@@ -148,10 +139,6 @@ def create_vector_index():
 
     except Exception as e:
         print(f"An error occurred during index creation: {e}")
-    finally:
-        if client:
-            client.close()
-            print("MongoDB connection closed after index creation.")
 
 
 def create_memory_vector_index():
@@ -160,11 +147,9 @@ def create_memory_vector_index():
     for Memento-style case retrieval.
     Also creates regular indexes for common query patterns.
     """
-    client = None
     try:
         print("Connecting to MongoDB to create memory vector index...")
-        client = MongoClient(MONGO_URI)
-        db = client[DB_NAME]
+        db = get_mongo_db()
 
         memory_collection_name = "conversation_memories"
 
@@ -220,13 +205,13 @@ def create_memory_vector_index():
 
     except Exception as e:
         print(f"An error occurred during memory index creation: {e}")
-    finally:
-        if client:
-            client.close()
-            print("MongoDB connection closed after memory index creation.")
 
 
 if __name__ == "__main__":
-    load_data_to_mongodb()
-    create_vector_index()
-    create_memory_vector_index()
+    try:
+        load_data_to_mongodb()
+        create_vector_index()
+        create_memory_vector_index()
+    finally:
+        close_mongo_client()
+        print("MongoDB shared client closed.")

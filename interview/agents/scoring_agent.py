@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Any, List
 from langchain_core.messages import SystemMessage, HumanMessage
 from .base_agent import BaseAgent
+from .qa_models import get_score
 
 
 class ScoringAgent(BaseAgent):
@@ -239,8 +240,9 @@ Please provide a detailed scoring result according to the scoring criteria.
                 "recommendation": "continue"
             }
         
-        # 计算平均分
-        scores = [qa.get("score", 0) for qa in qa_history if "score" in qa]
+        # 计算平均分（统一从 score_details.score 读取，兼容旧顶层 score）
+        scores = [get_score(qa) for qa in qa_history]
+        scores = [s for s in scores if s > 0]
         if not scores:
             return {
                 "ready": False,

@@ -13,6 +13,7 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import axios from 'axios';
+import { API_BASE_URL } from '@/config';
 
 const resumeContent = ref('');
 const error = ref('');
@@ -33,7 +34,7 @@ async function fetchResume() {
 
   try {
     
-    const response = await axios.get('http://101.76.218.89:8000/api/resume/', {
+    const response = await axios.get(`${API_BASE_URL}/api/resume/`, {
       headers: {
         'Authorization': `Bearer ${token}`
       }
@@ -63,7 +64,7 @@ async function updateResume() {
 
   isUpdating.value = true;
   try {
-    await axios.post('http://101.76.218.89:8000/api/resume/update/', { content: resumeContent.value }, {
+    await axios.post(`${API_BASE_URL}/api/resume/update/`, { content: resumeContent.value }, {
       headers: {
         'Authorization': `Bearer ${token}`
       }

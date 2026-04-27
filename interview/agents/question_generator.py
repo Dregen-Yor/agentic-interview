@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Any, List
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from .base_agent import BaseAgent
+from .qa_models import get_question_type
 from interview.tools.rag_tools import RetrievalSystem, rag_search as rag_search_tool
 from interview.rubrics import RUBRIC_DIMENSIONS
 
@@ -291,28 +292,6 @@ Resume-Anchored Questioning Rules:
             self.logger.warning(f"Failed to invoke with tools, falling back to text-only generation: {e}")
             return self._invoke_model(messages)
     
-    def generate_initial_questions(self, count: int = 3, parsed_profile: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """生成初始问题集"""
-        questions = []
-
-        # 开场问题
-        opening_result = self.process({
-            "interview_stage": "opening",
-            "parsed_profile": parsed_profile,
-        })
-        questions.append(opening_result)
-
-        # 技术问题
-        for i in range(count - 1):
-            technical_result = self.process({
-                "interview_stage": "technical",
-                "previous_qa": [],
-                "parsed_profile": parsed_profile,
-            })
-            questions.append(technical_result)
-
-        return questions
-
     def _fix_common_json_issues(self, response: str) -> str:
         """
         修复常见的JSON格式问题
@@ -373,14 +352,15 @@ Resume-Anchored Questioning Rules:
 
     def _count_question_types(self, previous_qa: List[Dict[str, Any]]) -> Dict[str, int]:
         """
-        统计历史问答中各类型（type）的出现次数，仅统计包含 'type' 字段的项。
+        统计历史问答中各题型出现次数。
+        优先读 'question_type'（统一字段），fallback 到旧字段 'type' 以兼容旧数据。
         """
         counts: Dict[str, int] = {}
         if not previous_qa:
             return counts
         for qa in previous_qa:
-            qa_type = qa.get("type")
-            if not qa_type:
+            qa_type = get_question_type(qa)
+            if not qa_type or qa_type == "general":
                 continue
             counts[qa_type] = counts.get(qa_type, 0) + 1
         return counts
