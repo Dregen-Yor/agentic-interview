@@ -1,37 +1,73 @@
 <template>
   <el-container class="main-layout">
-    <el-aside width="200px" class="sidebar">
-      <h1 class="logo">Agentic Interview</h1>
-      <el-menu :default-active="$route.path" router class="nav-menu">
+    <el-aside :width="asideWidth" class="sidebar">
+      <div class="sidebar-brand">
+        <span v-if="!collapsed" class="brand-name">Agentic Interview</span>
+        <span v-else class="brand-icon">AI</span>
+      </div>
+      <el-menu
+        :default-active="$route.path"
+        :collapse="collapsed"
+        router
+        class="nav-menu"
+        unique-opened
+      >
         <el-menu-item index="/">
           <el-icon><House /></el-icon>
-          <span>首页</span>
+          <template #title>首页</template>
         </el-menu-item>
         <el-sub-menu index="resume-management">
-            <template #title>
-                <el-icon><Files /></el-icon>
-                <span>简历管理</span>
-            </template>
-            <el-menu-item index="/resumerewriter">我的简历</el-menu-item>
+          <template #title>
+            <el-icon><Files /></el-icon>
+            <span>简历管理</span>
+          </template>
+          <el-menu-item index="/resumerewriter">我的简历</el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="interview-process">
-            <template #title>
-                <el-icon><VideoCamera /></el-icon>
-                <span>面试模拟</span>
-            </template>
-            <el-menu-item index="/face2facetest">在线面试</el-menu-item>
-            <el-menu-item index="/spokenlanguage">口语测试</el-menu-item>
+          <template #title>
+            <el-icon><VideoCamera /></el-icon>
+            <span>面试模拟</span>
+          </template>
+          <el-menu-item index="/face2facetest">在线面试</el-menu-item>
+          <el-menu-item index="/spokenlanguage">口语测试</el-menu-item>
         </el-sub-menu>
-         <el-menu-item index="/interviewresult">
+        <el-menu-item index="/interviewresult">
           <el-icon><DataAnalysis /></el-icon>
-          <span>面试结果</span>
+          <template #title>面试结果</template>
         </el-menu-item>
-        </el-menu>
+      </el-menu>
     </el-aside>
+
     <el-container>
       <el-header class="header">
-        <div>当前页面: {{ $route.meta.title || 'Multi-Agent AI Interview' }}</div>
-        </el-header>
+        <div class="header-left">
+          <el-icon class="collapse-btn" @click="collapsed = !collapsed">
+            <Fold v-if="!collapsed" />
+            <Expand v-else />
+          </el-icon>
+          <span class="header-title">{{ $route.meta.title || 'Multi-Agent AI Interview' }}</span>
+        </div>
+
+        <div class="header-right">
+          <el-dropdown trigger="click" @command="onUserCommand">
+            <span class="user-trigger">
+              <span class="user-avatar">{{ avatarLetter }}</span>
+              <span class="user-name">{{ username || '未登录' }}</span>
+              <el-icon><CaretBottom /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="resume">我的简历</el-dropdown-item>
+                <el-dropdown-item command="result">面试结果</el-dropdown-item>
+                <el-dropdown-item divided command="logout">
+                  <el-icon><SwitchButton /></el-icon> 退出登录
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+      </el-header>
+
       <el-main class="content-area">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
@@ -44,71 +80,183 @@
 </template>
 
 <script setup lang="ts">
-import { House, User, Files, VideoCamera, DataAnalysis, Tickets, ChatDotRound } from '@element-plus/icons-vue';
+import { ref, computed } from 'vue';
+import { useRouter } from 'vue-router';
+import {
+  House, Files, VideoCamera, DataAnalysis,
+  Fold, Expand, CaretBottom, SwitchButton,
+} from '@element-plus/icons-vue';
+import { useAuth } from '@/stores/auth';
+
+const router = useRouter();
+const auth = useAuth();
+const collapsed = ref(false);
+
+const asideWidth = computed(() => (collapsed.value ? '64px' : '210px'));
+
+const username = computed(
+  () => (auth.user as any)?.name || localStorage.getItem('username') || ''
+);
+
+const avatarLetter = computed(() => {
+  const name = username.value;
+  if (!name) return '?';
+  return name.charAt(0).toUpperCase();
+});
+
+function onUserCommand(cmd: string) {
+  if (cmd === 'logout') {
+    auth.logout();
+    router.push({ name: 'Login' });
+  } else if (cmd === 'resume') {
+    router.push('/resumerewriter');
+  } else if (cmd === 'result') {
+    router.push('/interviewresult');
+  }
+}
 </script>
 
 <style scoped>
 .main-layout {
   height: 100vh;
 }
+
+/* ---- 侧边栏 ---- */
 .sidebar {
-  background-color: #304156; /* 深色侧边栏示例 */
-  color: #bfcbd9;
-  display: flex;
-  flex-direction: column;
-}
-.logo {
-  color: #fff;
-  font-size: 20px;
-  text-align: center;
-  padding: 20px 0;
-  margin: 0;
-  border-bottom: 1px solid #43546a;
-}
-.nav-menu {
-  border-right: none; /* 移除 el-menu 默认的右边框 */
-  background-color: transparent;
-}
-.nav-menu .el-menu-item,
-.nav-menu .el-sub-menu__title {
-  color: #bfcbd9;
-}
-.nav-menu .el-menu-item:hover,
-.nav-menu .el-sub-menu__title:hover {
-  background-color: #263445; /* 鼠标悬停背景色 */
-}
-.nav-menu .el-menu-item.is-active {
-  color: #409eff; /* 激活项颜色 */
   background-color: #1f2d3d;
-}
-.el-sub-menu .el-menu-item {
-    background-color: #1f2d3d; /* 子菜单项背景色 */
-    color: #bfcbd9;
-}
-.el-sub-menu .el-menu-item:hover {
-    background-color: #001528;
-}
-.el-sub-menu .el-menu-item.is-active {
-    color: #409eff;
-    background-color: #001528;
+  transition: width 0.25s ease;
+  overflow: hidden;
 }
 
-.header {
-  background-color: #fff;
-  color: #333;
+.sidebar-brand {
+  height: 60px;
   display: flex;
   align-items: center;
-  padding: 0 20px;
-  box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
-  z-index: 1;
-}
-.content-area {
-  padding: 20px;
-  background-color: #f0f2f5; /* 内容区域背景色 */
-  overflow-y: auto; /* 如果内容过多则显示滚动条 */
+  justify-content: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  color: #fff;
 }
 
-/* 路由切换动画 */
+.brand-name {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.02em;
+}
+
+.brand-icon {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-primary);
+}
+
+.nav-menu {
+  border-right: none;
+  background-color: transparent;
+}
+
+.nav-menu :deep(.el-menu-item),
+.nav-menu :deep(.el-sub-menu__title) {
+  color: #bfcbd9;
+}
+
+.nav-menu :deep(.el-menu-item:hover),
+.nav-menu :deep(.el-sub-menu__title:hover) {
+  background-color: #263445;
+}
+
+.nav-menu :deep(.el-menu-item.is-active) {
+  color: var(--color-primary);
+  background-color: #263445;
+}
+
+.nav-menu :deep(.el-sub-menu .el-menu-item) {
+  background-color: #1a2638;
+}
+
+.nav-menu :deep(.el-sub-menu .el-menu-item.is-active) {
+  color: var(--color-primary);
+  background-color: #001528;
+}
+
+/* ---- Header ---- */
+.header {
+  height: 60px;
+  background-color: var(--color-bg-card);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-6);
+  box-shadow: none;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.collapse-btn {
+  font-size: 20px;
+  color: var(--color-text-regular);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.collapse-btn:hover {
+  color: var(--color-primary);
+}
+
+.header-title {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+}
+
+.user-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  transition: background-color var(--transition-fast);
+}
+
+.user-trigger:hover {
+  background-color: var(--color-bg-page);
+}
+
+.user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: var(--color-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.user-name {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+
+/* ---- 内容区 ---- */
+.content-area {
+  padding: 0;
+  background-color: var(--color-bg-page);
+  overflow-y: auto;
+}
+
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s ease;

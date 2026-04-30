@@ -20,7 +20,13 @@ class InterviewConsumer(AsyncWebsocketConsumer):
         self.chat_id = self.scope['url_route']['kwargs']['chat_id']
         self.group_name = f"interview_{self.chat_id}"
         self.interview_started = False
-        
+
+        # 后台任务追踪：保留强引用避免被 GC，并在完成时统一处理异常
+        self._pending_tasks: set[asyncio.Task] = set()
+        # 防止 start_interview 与 process_user_answer 并发执行（同步阻塞调用，
+        # 必须串行化以保证 coordinator 内部状态机一致）
+        self._answer_lock = asyncio.Lock()
+
         # 初始化多智能体协调器
         models = {
             "question_model": chatgpt_model,
@@ -29,22 +35,54 @@ class InterviewConsumer(AsyncWebsocketConsumer):
             "summary_model": gemini_model
         }
         self.coordinator = MultiAgentCoordinator(models)
-        
+
         # 加入 Channel Layer 组
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
-        
+
         logger.info(f"WebSocket连接已建立: {self.chat_id}")
 
     async def disconnect(self, close_code):
+        # 取消尚未完成的后台任务
+        if hasattr(self, "_pending_tasks"):
+            for task in list(self._pending_tasks):
+                if not task.done():
+                    task.cancel()
+
         # 清理面试会话
         if hasattr(self, 'coordinator'):
             self.coordinator.cleanup_session(self.chat_id)
-        
+
         # 离开 Channel Layer 组
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
-        
+
         logger.info(f"WebSocket连接已断开: {self.chat_id}")
+
+    def _spawn_task(self, coro) -> asyncio.Task:
+        """安全地启动后台任务：保留引用、绑定异常回调。
+
+        - 强引用存入 self._pending_tasks，避免任务被 GC 中途丢弃；
+        - done_callback 统一记录异常并在出错时把错误回送给前端；
+        - 完成后从 set 中移除，防止内存累积。
+        """
+        task = asyncio.create_task(coro)
+        self._pending_tasks.add(task)
+
+        def _on_done(t: asyncio.Task) -> None:
+            self._pending_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                logger.exception(f"后台任务未捕获异常: {exc}", exc_info=exc)
+                # 异常时尝试通知前端（best-effort，发送失败也不再传播）
+                try:
+                    asyncio.create_task(self.send_error("处理过程中发生内部错误"))
+                except Exception:  # pragma: no cover - 仅防御
+                    pass
+
+        task.add_done_callback(_on_done)
+        return task
 
     async def receive(self, text_data):
         """
@@ -54,17 +92,18 @@ class InterviewConsumer(AsyncWebsocketConsumer):
             data = json.loads(text_data)
             user_input = data.get('message', '')
             username = data.get('username')
-            
+
             # 如果面试还未开始且提供了用户名，启动面试
             if not self.interview_started and username:
-                asyncio.create_task(self.start_interview(username))
+                # 立即标记 started，避免在 start_interview 完成前重复触发
                 self.interview_started = True
+                self._spawn_task(self._run_start_interview(username))
             elif user_input and self.interview_started:
                 # 处理用户回答
-                asyncio.create_task(self.process_user_answer(user_input))
+                self._spawn_task(self._run_process_answer(user_input))
             else:
                 await self.send_error("无效的输入格式")
-                
+
         except json.JSONDecodeError:
             # JSON解析失败时，返回原始字符串
             await self.send(text_data=json.dumps({
@@ -76,12 +115,31 @@ class InterviewConsumer(AsyncWebsocketConsumer):
             logger.error(f"接收消息时发生错误: {e}")
             await self.send_error("处理消息时发生错误")
 
+    async def _run_start_interview(self, username: str) -> None:
+        """串行化包装：避免与 process_answer 并发。
+
+        说明：LangGraph 改造后 coordinator 内部已 async-safe，且 graph 自带 thread_id 的
+        checkpoint 隔离；保留外层锁防御候选人快速连击导致同一会话内的状态竞争。
+        """
+        async with self._answer_lock:
+            try:
+                await self.start_interview(username)
+            except Exception:
+                self.interview_started = False
+                raise
+
+    async def _run_process_answer(self, user_answer: str) -> None:
+        """串行化包装：单一会话内保证 process_answer 顺序执行。"""
+        async with self._answer_lock:
+            await self.process_user_answer(user_answer)
+
     async def start_interview(self, candidate_name: str):
         """
         启动面试流程
         """
         try:
-            result = self.coordinator.start_interview(self.chat_id, candidate_name)
+            # 走 async 入口（直接 await，避免 sync wrapper 的 thread pool 开销）
+            result = await self.coordinator.astart_interview(self.chat_id, candidate_name)
             
             if result["success"]:
                 # 发送首个问题（协调器已经处理了文本提取）
@@ -110,7 +168,8 @@ class InterviewConsumer(AsyncWebsocketConsumer):
         处理用户回答
         """
         try:
-            result = self.coordinator.process_answer(self.chat_id, user_answer)
+            # 走 LangGraph async 入口（内部 security/scoring 并行）
+            result = await self.coordinator.aprocess_answer(self.chat_id, user_answer)
             
             if result["success"]:
                 if result.get("interview_complete"):

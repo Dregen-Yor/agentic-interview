@@ -114,6 +114,7 @@ def some_view(request):
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-29 | `consumers.py` 重构：新增 `_pending_tasks` 强引用集 + `_spawn_task()` done_callback 异常处理；`_answer_lock` 串行化 `start_interview` / `process_user_answer`，避免 coordinator 状态机被并发踩坑；`disconnect()` 取消未完成任务 |
 | 2026-04-27 | 删除 `views.py`、新增 `auth_utils.py`、`users.py` 切到共享连接池 + `@jwt_required`、文档同步更新 |
 | 2026-04-24T15:33:52.266Z | 补充 views.py、users.py、llm.py、rubrics.py 详细说明 |
 | 2026-04-24T15:26:51.503Z | 初始化模块文档 |

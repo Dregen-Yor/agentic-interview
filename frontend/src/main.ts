@@ -5,6 +5,8 @@ import { createPinia } from 'pinia'
 // 导入Element Plus UI框架
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
+// 导入 KaTeX 数学公式样式（一次性全局加载，含字体）
+import 'katex/dist/katex.min.css'
 // 导入自定义样式
 import './assets/main.css'
 import App from './App.vue'

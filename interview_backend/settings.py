@@ -28,7 +28,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # 参见 https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # 安全警告：生产环境中保持密钥安全！
-SECRET_KEY = 'django-insecure-%hjnf1=4j@bs(+-#iyhh=8&cen&n3fecx3&u0@pmz_pkdkmbjv'
+# SECRET_KEY 用于 Django 内部签名 + JWT 签发（interview/auth_utils.py），
+# 必须通过环境变量注入；缺失时 fail-fast 防止使用默认弱密钥导致 token 可被伪造。
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY 未配置：请在 .env 或环境变量中设置 SECRET_KEY。"
+        "切勿使用 'django-insecure-...' 默认开发密钥，否则任何看过仓库的人都能伪造 JWT。"
+    )
 
 # 安全警告：生产环境中不要开启调试模式！
 DEBUG = True

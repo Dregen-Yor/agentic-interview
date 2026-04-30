@@ -1,692 +1,595 @@
 <template>
-    <div class="result-container">
-        <h1>面试评估报告</h1>
-        <div v-if="isLoading" class="loading">正在加载您的面试结果...</div>
-        <div v-if="error" class="error-message">{{ error }}</div>
-        <div v-if="interviewResult" class="result-content">
-            <!-- 基本信息卡片 -->
-            <div class="result-card basic-info">
-                <div class="result-header">
-                    <h2>{{ interviewResult.candidate_name || interviewResult.name }} 的面试评估</h2>
-                    <div class="header-right">
-                        <span :class="['status', getDecisionClass(interviewResult.final_decision)]">
-                            {{ getDecisionText(interviewResult.final_decision) }}
-                        </span>
-                        <div class="final-grade" v-if="interviewResult.final_grade">
-                            <span class="grade-label">最终等级</span>
-                            <span class="grade-value">{{ interviewResult.final_grade }}</span>
-                        </div>
-                        <div class="overall-score" v-if="interviewResult.overall_score">
-                            <span class="score-label">综合评分</span>
-                            <span class="score-value">{{ getScoreValue(interviewResult.overall_score) }}/10</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
+  <div class="result-page">
+    <header class="result-page-header">
+      <h1 class="result-page-title">面试评估报告</h1>
+    </header>
 
-            <!-- 面试总结 -->
-            <div class="result-card summary-card">
-                <h3>面试总结</h3>
-                <p class="summary-text">{{ interviewResult.summary }}</p>
-                <div class="confidence-level" v-if="interviewResult.confidence_level">
-                    <span class="confidence-label">评估置信度:</span>
-                    <span :class="['confidence-value', `confidence-${interviewResult.confidence_level}`]">
-                        {{ getConfidenceText(interviewResult.confidence_level) }}
-                    </span>
-                </div>
-            </div>
-
-            <!-- 优势和不足 -->
-            <div class="result-grid">
-                <div class="result-card strengths-card">
-                    <h3>✨ 候选人优势</h3>
-                    <ul v-if="interviewResult.strengths && interviewResult.strengths.length > 0">
-                        <li v-for="(strength, index) in interviewResult.strengths" :key="index">
-                            {{ strength }}
-                        </li>
-                    </ul>
-                    <p v-else class="no-data">暂无数据</p>
-                </div>
-
-                <div class="result-card weaknesses-card">
-                    <h3>⚠️ 需要改进的地方</h3>
-                    <ul v-if="interviewResult.weaknesses && interviewResult.weaknesses.length > 0">
-                        <li v-for="(weakness, index) in interviewResult.weaknesses" :key="index">
-                            {{ weakness }}
-                        </li>
-                    </ul>
-                    <p v-else class="no-data">暂无数据</p>
-                </div>
-            </div>
-
-            <!-- 详细分析 -->
-            <div class="result-card analysis-card" v-if="interviewResult.detailed_analysis">
-                <h3>📊 详细能力分析</h3>
-                <div class="analysis-grid">
-                    <div class="analysis-item" v-for="(value, key) in interviewResult.detailed_analysis" :key="key">
-                        <div class="analysis-header">
-                            <span class="analysis-title">{{ getAnalysisTitle(key) }}</span>
-                        </div>
-                        <div class="analysis-content">
-                            {{ value }}
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 建议和推荐 -->
-            <div class="result-card recommendations-card" v-if="interviewResult.recommendations">
-                <h3>💡 建议与推荐</h3>
-                <div class="recommendations-content">
-                    <div class="recommendation-section" v-if="interviewResult.recommendations.for_candidate">
-                        <h4>对候选人的建议</h4>
-                        <p>{{ interviewResult.recommendations.for_candidate }}</p>
-                    </div>
-                    <div class="recommendation-section" v-if="interviewResult.recommendations.for_program || interviewResult.recommendations.for_company">
-                        <h4>对项目/学院的建议</h4>
-                        <p>{{ interviewResult.recommendations.for_program || interviewResult.recommendations.for_company }}</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 数据库保存状态 -->
-            <div class="result-card db-status-card" v-if="interviewResult.database_save_status">
-                <div class="db-status">
-                    <span class="db-icon">💾</span>
-                    <span class="db-message">{{ interviewResult.database_save_status }}</span>
-                </div>
-            </div>
-
-            <!-- 结果时间戳 -->
-            <div class="result-footer">
-                <div class="timestamp-info">
-                    <span class="timestamp-label">生成时间:</span>
-                    <span class="timestamp-value">
-                        {{ formatTimestamp(interviewResult.generated_at || interviewResult.created_at || interviewResult.timestamp) }}
-                    </span>
-                </div>
-                <div class="processed-by" v-if="interviewResult.processed_by">
-                    <span class="processed-label">处理者:</span>
-                    <span class="processed-value">{{ interviewResult.processed_by }}</span>
-                </div>
-            </div>
-        </div>
+    <!-- 加载中 -->
+    <div v-if="isLoading" class="state-card">
+      <div class="state-spinner"></div>
+      <p>正在加载您的面试结果…</p>
     </div>
+
+    <!-- 错误 -->
+    <div v-else-if="error" class="state-card state-card--error">
+      <p>{{ error }}</p>
+    </div>
+
+    <!-- 数据 -->
+    <div v-else-if="interviewResult" class="result-content">
+      <!-- 概览卡 -->
+      <section class="overview-card app-card">
+        <div class="overview-left">
+          <ScoreRing
+            :score="numericScore"
+            :max="10"
+            :size="140"
+            :color="decisionColor"
+          />
+        </div>
+        <div class="overview-main">
+          <div class="overview-name">
+            {{ interviewResult.candidate_name || interviewResult.name }}
+          </div>
+          <div class="overview-tagline">
+            <span class="app-tag" :class="decisionTagClass">
+              {{ getDecisionText(interviewResult.final_decision) }}
+            </span>
+            <span v-if="interviewResult.final_grade" class="grade-chip">
+              等级 <strong>{{ interviewResult.final_grade }}</strong>
+            </span>
+            <span v-if="interviewResult.confidence_level" class="app-tag">
+              置信度 {{ getConfidenceText(interviewResult.confidence_level) }}
+            </span>
+          </div>
+          <p v-if="interviewResult.summary" class="overview-summary">
+            {{ interviewResult.summary }}
+          </p>
+          <div class="overview-meta">
+            <span>生成时间：{{ formatTimestamp(interviewResult.generated_at || interviewResult.created_at || interviewResult.timestamp) }}</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 五维度 + 雷达图 -->
+      <section v-if="radarAxes.length" class="dimensions-card app-card">
+        <h2 class="card-title">五维度能力</h2>
+        <div class="dimensions-body">
+          <div class="dimensions-radar">
+            <RadarChart :axes="radarAxes" :size="320" />
+          </div>
+          <ul class="dimensions-list">
+            <li v-for="dim in radarAxes" :key="dim.label" class="dimensions-item">
+              <div class="dim-row">
+                <span class="dim-label">{{ dim.label }}</span>
+                <span class="dim-score">{{ dim.value }} / {{ dim.max }}</span>
+              </div>
+              <div class="dim-bar-track">
+                <div
+                  class="dim-bar-fill"
+                  :style="{ width: `${(dim.value / dim.max) * 100}%` }"
+                ></div>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- 详细分析 + 优势/不足 -->
+      <div class="analysis-grid">
+        <section
+          v-if="interviewResult.detailed_analysis"
+          class="analysis-card app-card"
+        >
+          <h2 class="card-title">详细分析</h2>
+          <div class="analysis-list">
+            <div
+              v-for="(value, key) in interviewResult.detailed_analysis"
+              :key="key"
+              class="analysis-item"
+            >
+              <div class="analysis-item-title">{{ getAnalysisTitle(key) }}</div>
+              <div class="analysis-item-content">{{ value }}</div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="aside-stack">
+          <section class="strength-card app-card">
+            <h2 class="card-title card-title--success">优势</h2>
+            <div v-if="hasItems(interviewResult.strengths)" class="tag-list">
+              <span
+                v-for="(s, i) in interviewResult.strengths"
+                :key="`s-${i}`"
+                class="app-tag app-tag--success"
+              >
+                {{ s }}
+              </span>
+            </div>
+            <p v-else class="no-data">暂无数据</p>
+          </section>
+
+          <section class="weakness-card app-card">
+            <h2 class="card-title card-title--warning">待改进</h2>
+            <div v-if="hasItems(interviewResult.weaknesses)" class="tag-list">
+              <span
+                v-for="(w, i) in interviewResult.weaknesses"
+                :key="`w-${i}`"
+                class="app-tag app-tag--warning"
+              >
+                {{ w }}
+              </span>
+            </div>
+            <p v-else class="no-data">暂无数据</p>
+          </section>
+        </aside>
+      </div>
+
+      <!-- 推荐 -->
+      <section
+        v-if="interviewResult.recommendations"
+        class="recommendations-card app-card"
+      >
+        <h2 class="card-title">建议与推荐</h2>
+        <div class="rec-grid">
+          <div
+            v-if="interviewResult.recommendations.for_candidate"
+            class="rec-block"
+          >
+            <h3 class="rec-block-title">对候选人</h3>
+            <p>{{ interviewResult.recommendations.for_candidate }}</p>
+          </div>
+          <div
+            v-if="
+              interviewResult.recommendations.for_program ||
+              interviewResult.recommendations.for_company
+            "
+            class="rec-block"
+          >
+            <h3 class="rec-block-title">对项目 / 学院</h3>
+            <p>
+              {{
+                interviewResult.recommendations.for_program ||
+                interviewResult.recommendations.for_company
+              }}
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useAuth } from '@/stores/auth';
+import RadarChart from '@/components/RadarChart.vue';
+import ScoreRing from '@/components/ScoreRing.vue';
 
 const authStore = useAuth();
 const interviewResult = ref<any>(null);
 const isLoading = ref(true);
 const error = ref<string | null>(null);
 
-// 决策状态映射
-const getDecisionClass = (decision: string) => {
-    switch (decision) {
-        case 'accept':
-            return 'status-pass';
-        case 'reject':
-            return 'status-fail';
-        case 'conditional':
-            return 'status-conditional';
-        default:
-            return 'status-default';
+// ---- 维度配置 ----
+// 与后端 rubrics.py 的 RUBRIC_DIMENSIONS 对齐
+const DIMENSIONS: { key: string; label: string; max: number }[] = [
+  { key: 'math_logic', label: '数理与逻辑', max: 4 },
+  { key: 'reasoning_rigor', label: '推理严谨性', max: 2 },
+  { key: 'communication', label: '沟通能力', max: 2 },
+  { key: 'collaboration', label: '合作与社交', max: 1 },
+  { key: 'growth_potential', label: '发展潜力', max: 1 },
+];
+
+// 雷达图轴：从 detailed_summary.breakdown 或 summary 中读取分数
+const radarAxes = computed(() => {
+  const r = interviewResult.value;
+  if (!r) return [];
+
+  // 兼容多种数据来源：
+  // 1. r.breakdown（部分总结直接含 breakdown）
+  // 2. 旧版 average_scores 字段
+  const breakdown =
+    r.breakdown || r.score_breakdown || r.average_scores || null;
+  if (!breakdown || typeof breakdown !== 'object') return [];
+
+  return DIMENSIONS.filter((d) => breakdown[d.key] !== undefined).map((d) => ({
+    label: d.label,
+    value: numericValue(breakdown[d.key]),
+    max: d.max,
+  }));
+});
+
+// 综合分数环
+const numericScore = computed(() => numericValue(interviewResult.value?.overall_score));
+
+// 决策颜色
+const decisionColor = computed(() => {
+  const d = interviewResult.value?.final_decision;
+  if (d === 'accept') return 'var(--color-success)';
+  if (d === 'reject') return 'var(--color-danger)';
+  if (d === 'conditional') return 'var(--color-warning)';
+  return 'var(--color-primary)';
+});
+
+const decisionTagClass = computed(() => {
+  const d = interviewResult.value?.final_decision;
+  if (d === 'accept') return 'app-tag--success';
+  if (d === 'reject') return 'app-tag--danger';
+  if (d === 'conditional') return 'app-tag--warning';
+  return '';
+});
+
+// ---- 辅助函数 ----
+function numericValue(v: any): number {
+  if (typeof v === 'number') return v;
+  if (typeof v === 'object' && v) {
+    if (v.$numberDouble !== undefined) return parseFloat(v.$numberDouble) || 0;
+    if (v.$numberInt !== undefined) return parseInt(v.$numberInt, 10) || 0;
+  }
+  const parsed = parseFloat(v);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+function hasItems(arr: any): boolean {
+  return Array.isArray(arr) && arr.length > 0;
+}
+
+function getDecisionText(decision: string) {
+  switch (decision) {
+    case 'accept': return '建议录用';
+    case 'reject': return '不建议录用';
+    case 'conditional': return '条件录用';
+    default: return decision || '待评估';
+  }
+}
+
+function getConfidenceText(confidence: string) {
+  switch (confidence) {
+    case 'high': return '高';
+    case 'medium': return '中';
+    case 'low': return '低';
+    default: return confidence || '未知';
+  }
+}
+
+function getAnalysisTitle(key: string | number) {
+  const map: Record<string, string> = {
+    math_logic: '数理与逻辑',
+    reasoning_rigor: '推理严谨性',
+    communication: '沟通能力',
+    collaboration: '合作与社交',
+    growth_potential: '发展潜力',
+    technical_skills: '技术能力',
+    experience_match: '经验匹配度',
+    problem_solving: '问题解决能力',
+  };
+  return map[String(key)] || String(key);
+}
+
+function formatTimestamp(timestamp: any) {
+  if (!timestamp) return '未知时间';
+  try {
+    let d: Date;
+    if (typeof timestamp === 'object' && timestamp.$date?.$numberLong) {
+      d = new Date(parseInt(timestamp.$date.$numberLong, 10));
+    } else if (typeof timestamp === 'string' || typeof timestamp === 'number') {
+      d = new Date(timestamp);
+    } else {
+      return '未知时间';
     }
-};
-
-const getDecisionText = (decision: string) => {
-    switch (decision) {
-        case 'accept':
-            return '建议录用';
-        case 'reject':
-            return '不建议录用';
-        case 'conditional':
-            return '条件录用';
-        default:
-            return decision || '待评估';
-    }
-};
-
-// 置信度映射
-const getConfidenceText = (confidence: string) => {
-    switch (confidence) {
-        case 'high':
-            return '高';
-        case 'medium':
-            return '中等';
-        case 'low':
-            return '低';
-        default:
-            return confidence || '未知';
-    }
-};
-
-// 分析标题映射
-const getAnalysisTitle = (key: string | number) => {
-    const keyStr = String(key);
-    const titles: { [key: string]: string } = {
-        technical_skills: '技术能力', // 旧字段
-        experience_match: '经验匹配度', // 旧字段
-        communication: '沟通能力',
-        problem_solving: '问题解决能力', // 旧字段
-        growth_potential: '发展潜力',
-        // 新字段兼容
-        math_logic: '数理与逻辑',
-        reasoning_rigor: '推理严谨性',
-        collaboration: '合作与社交'
-    };
-    return titles[keyStr] || keyStr;
-};
-
-// 处理MongoDB数值格式
-const getScoreValue = (score: any) => {
-    if (typeof score === 'object' && score.$numberDouble) {
-        return parseFloat(score.$numberDouble).toFixed(1);
-    }
-    if (typeof score === 'object' && score.$numberInt) {
-        return parseInt(score.$numberInt);
-    }
-    if (typeof score === 'number') {
-        return score.toFixed(1);
-    }
-    return score || '0.0';
-};
-
-// 时间戳格式化
-const formatTimestamp = (timestamp: any) => {
-    if (!timestamp) return '未知时间';
-
-    try {
-        let dateValue;
-
-        // 处理MongoDB $date格式
-        if (typeof timestamp === 'object' && timestamp.$date && timestamp.$date.$numberLong) {
-            dateValue = new Date(parseInt(timestamp.$date.$numberLong));
-        }
-        // 处理字符串格式
-        else if (typeof timestamp === 'string') {
-            dateValue = new Date(timestamp);
-        }
-        // 处理数字格式
-        else if (typeof timestamp === 'number') {
-            dateValue = new Date(timestamp);
-        }
-        else {
-            return '未知时间';
-        }
-
-        if (isNaN(dateValue.getTime())) {
-            return '无效时间';
-        }
-
-        return dateValue.toLocaleString('zh-CN', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        });
-    } catch (e) {
-        return '时间格式错误';
-    }
-};
+    if (isNaN(d.getTime())) return '无效时间';
+    return d.toLocaleString('zh-CN', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch {
+    return '时间格式错误';
+  }
+}
 
 onMounted(async () => {
-    try {
-        const data = await authStore.getInterviewResult();
-        if (data.result) {
-            // 根据新的result.json格式，面试结果在detailed_summary中
-            if (data.result.detailed_summary) {
-                const detailedSummary = data.result.detailed_summary;
-                interviewResult.value = {
-                    ...detailedSummary,
-                    session_id: data.result.session_id,
-                    created_at: data.result.timestamp || data.result.created_at,
-                    saved_at: data.result.saved_at,
-                    // 确保candidate_name字段存在
-                    candidate_name: detailedSummary.candidate_name || data.result.candidate_name || data.result.name
-                };
-            } else {
-                // 如果没有detailed_summary，尝试使用其他字段
-                interviewResult.value = {
-                    ...data.result,
-                    // 如果没有summary字段，使用comment作为summary
-                    summary: data.result.summary || data.result.comment || '暂无面试总结'
-                };
-            }
-        } else {
-            error.value = '未能获取到面试结果。';
-        }
-    } catch (e: any) {
-        error.value = e.message || '获取面试结果失败。';
-    } finally {
-        isLoading.value = false;
+  try {
+    const data = await authStore.getInterviewResult();
+    if (data.result) {
+      if (data.result.detailed_summary) {
+        const ds = data.result.detailed_summary;
+        interviewResult.value = {
+          ...ds,
+          session_id: data.result.session_id,
+          created_at: data.result.timestamp || data.result.created_at,
+          candidate_name:
+            ds.candidate_name || data.result.candidate_name || data.result.name,
+        };
+      } else {
+        interviewResult.value = {
+          ...data.result,
+          summary:
+            data.result.summary || data.result.comment || '暂无面试总结',
+        };
+      }
+    } else {
+      error.value = '未能获取到面试结果。';
     }
+  } catch (e: any) {
+    error.value = e.message || '获取面试结果失败。';
+  } finally {
+    isLoading.value = false;
+  }
 });
 </script>
 
 <style scoped>
-.result-container {
-    max-width: 1000px;
-    margin: 2rem auto;
-    padding: 2rem;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-    min-height: 100vh;
+.result-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--space-6);
 }
 
-h1 {
-    text-align: center;
-    color: #2c3e50;
-    margin-bottom: 2rem;
-    font-size: 2.5rem;
-    font-weight: 300;
-    text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+.result-page-header {
+  margin-bottom: var(--space-6);
 }
 
-.loading, .error-message {
-    text-align: center;
-    padding: 2rem;
-    font-size: 1.2rem;
-    border-radius: 12px;
-    margin: 2rem 0;
+.result-page-title {
+  margin: 0;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
 }
 
-.loading {
-    background: rgba(255,255,255,0.9);
-    color: #666;
+/* 状态卡 */
+.state-card {
+  background-color: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-12) var(--space-6);
+  text-align: center;
+  color: var(--color-text-secondary);
 }
 
-.error-message {
-    color: #e74c3c;
-    background: rgba(231, 76, 60, 0.1);
-    border: 1px solid rgba(231, 76, 60, 0.3);
+.state-card--error {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  background-color: var(--color-danger-bg);
 }
 
+.state-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  margin: 0 auto var(--space-4);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 内容区 */
 .result-content {
-    display: flex;
-    flex-direction: column;
-    gap: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
 }
 
-.result-card {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 16px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-    overflow: hidden;
-    transition: all 0.3s ease;
-    padding: 2rem;
+/* 概览 */
+.overview-card {
+  display: flex;
+  gap: var(--space-8);
+  align-items: center;
 }
 
-.result-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+.overview-left {
+  flex-shrink: 0;
 }
 
-.basic-info {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    margin-bottom: 1rem;
+.overview-main {
+  flex: 1;
+  min-width: 0;
 }
 
-.basic-info .result-header {
-    background: transparent;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+.overview-name {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-3);
 }
 
-.basic-info h2 {
-    color: white;
+.overview-tagline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
 }
 
-.result-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1.5rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid rgba(0,0,0,0.1);
+.grade-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  background-color: var(--color-primary-light);
+  color: var(--color-primary);
 }
 
-.header-right {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
+.grade-chip strong {
+  font-weight: var(--font-weight-bold);
 }
 
-.status {
-    padding: 0.75rem 1.5rem;
-    border-radius: 25px;
-    font-weight: 600;
-    color: #fff;
-    font-size: 1rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+.overview-summary {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+  color: var(--color-text-regular);
 }
 
-.status-pass {
-    background: linear-gradient(45deg, #27ae60, #2ecc71);
+.overview-meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-placeholder);
 }
 
-.status-fail {
-    background: linear-gradient(45deg, #e74c3c, #c0392b);
+/* 维度卡 */
+.card-title {
+  margin: 0 0 var(--space-5);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
 }
 
-.status-conditional {
-    background: linear-gradient(45deg, #f39c12, #e67e22);
+.card-title--success { color: var(--color-success); }
+.card-title--warning { color: var(--color-warning); }
+
+.dimensions-body {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-8);
+  align-items: center;
 }
 
-.overall-score {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    background: rgba(255,255,255,0.2);
-    padding: 1rem;
-    border-radius: 12px;
-    backdrop-filter: blur(10px);
+.dimensions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-.final-grade {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    background: rgba(255,255,255,0.2);
-    padding: 1rem;
-    border-radius: 12px;
-    backdrop-filter: blur(10px);
+.dimensions-item {
+  margin-bottom: var(--space-4);
 }
 
-.grade-label {
-    font-size: 0.9rem;
-    opacity: 0.9;
-    margin-bottom: 0.25rem;
+.dim-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--font-size-sm);
+  margin-bottom: 6px;
 }
 
-.grade-value {
-    font-size: 1.8rem;
-    font-weight: bold;
+.dim-label {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
 }
 
-.score-label {
-    font-size: 0.9rem;
-    opacity: 0.9;
-    margin-bottom: 0.25rem;
+.dim-score {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
-.score-value {
-    font-size: 1.8rem;
-    font-weight: bold;
+.dim-bar-track {
+  height: 6px;
+  background-color: var(--color-border-light);
+  border-radius: var(--radius-full);
+  overflow: hidden;
 }
 
-.result-card h3 {
-    color: #2c3e50;
-    margin-bottom: 1rem;
-    font-size: 1.4rem;
-    font-weight: 600;
+.dim-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-primary) 0%, #7dbcff 100%);
+  border-radius: var(--radius-full);
+  transition: width 0.4s ease;
 }
 
-.summary-card .summary-text {
-    font-size: 1.1rem;
-    line-height: 1.7;
-    color: #34495e;
-    margin-bottom: 1rem;
-}
-
-.confidence-level {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-top: 1rem;
-    padding: 0.75rem 1rem;
-    background: rgba(52, 152, 219, 0.1);
-    border-radius: 8px;
-}
-
-.confidence-label {
-    font-weight: 600;
-    color: #2980b9;
-}
-
-.confidence-value {
-    padding: 0.25rem 0.75rem;
-    border-radius: 15px;
-    font-size: 0.9rem;
-    font-weight: 600;
-}
-
-.confidence-high {
-    background: #27ae60;
-    color: white;
-}
-
-.confidence-medium {
-    background: #f39c12;
-    color: white;
-}
-
-.confidence-low {
-    background: #e74c3c;
-    color: white;
-}
-
-.result-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2rem;
-}
-
-.strengths-card {
-    border-left: 4px solid #27ae60;
-}
-
-.weaknesses-card {
-    border-left: 4px solid #e74c3c;
-}
-
-.strengths-card h3 {
-    color: #27ae60;
-}
-
-.weaknesses-card h3 {
-    color: #e74c3c;
-}
-
-.strengths-card ul, .weaknesses-card ul {
-    list-style: none;
-    padding: 0;
-}
-
-.strengths-card li, .weaknesses-card li {
-    padding: 0.75rem 0;
-    border-bottom: 1px solid rgba(0,0,0,0.05);
-    position: relative;
-    padding-left: 2rem;
-}
-
-.strengths-card li:before {
-    content: "✓";
-    position: absolute;
-    left: 0;
-    color: #27ae60;
-    font-weight: bold;
-}
-
-.weaknesses-card li:before {
-    content: "⚠";
-    position: absolute;
-    left: 0;
-    color: #e74c3c;
-    font-weight: bold;
-}
-
-.no-data {
-    color: #95a5a6;
-    font-style: italic;
-    text-align: center;
-    padding: 2rem;
-}
-
-.analysis-card {
-    border-left: 4px solid #3498db;
-}
-
-.analysis-card h3 {
-    color: #3498db;
-}
-
+/* 分析 + 优劣 */
 .analysis-grid {
-    display: grid;
-    gap: 1.5rem;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: var(--space-6);
+}
+
+.analysis-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
 .analysis-item {
-    background: rgba(52, 152, 219, 0.05);
-    border: 1px solid rgba(52, 152, 219, 0.1);
-    border-radius: 8px;
-    padding: 1.5rem;
-    transition: all 0.3s ease;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border-light);
 }
 
-.analysis-item:hover {
-    background: rgba(52, 152, 219, 0.1);
-    transform: translateY(-1px);
+.analysis-item:last-child {
+  border-bottom: none;
 }
 
-.analysis-header {
-    margin-bottom: 1rem;
+.analysis-item-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-2);
 }
 
-.analysis-title {
-    font-weight: 600;
-    color: #2980b9;
-    font-size: 1.1rem;
-    display: block;
-    padding-bottom: 0.5rem;
-    border-bottom: 2px solid rgba(52, 152, 219, 0.3);
+.analysis-item-content {
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+  color: var(--color-text-regular);
 }
 
-.analysis-content {
-    color: #34495e;
-    line-height: 1.6;
+.aside-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
 }
 
-.recommendations-card {
-    border-left: 4px solid #9b59b6;
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
-.recommendations-card h3 {
-    color: #9b59b6;
+.no-data {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-placeholder);
+  font-style: italic;
 }
 
-.recommendations-content {
-    display: grid;
-    gap: 1.5rem;
+/* 推荐 */
+.rec-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-5);
 }
 
-.recommendation-section {
-    background: rgba(155, 89, 182, 0.05);
-    border: 1px solid rgba(155, 89, 182, 0.1);
-    border-radius: 8px;
-    padding: 1.5rem;
+.rec-block {
+  background-color: var(--color-primary-bg);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
 }
 
-.recommendation-section h4 {
-    color: #8e44ad;
-    margin-bottom: 0.75rem;
-    font-size: 1.1rem;
+.rec-block-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-primary);
 }
 
-.recommendation-section p {
-    color: #34495e;
-    line-height: 1.6;
-    margin: 0;
+.rec-block p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+  color: var(--color-text-regular);
 }
 
-.db-status-card {
-    background: linear-gradient(135deg, rgba(46, 204, 113, 0.1), rgba(39, 174, 96, 0.05));
-    border: 1px solid rgba(46, 204, 113, 0.3);
-}
-
-.db-status {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    color: #27ae60;
-    font-weight: 600;
-}
-
-.db-icon {
-    font-size: 1.5rem;
-}
-
-.db-message {
-    font-size: 1rem;
-}
-
-.result-footer {
-    background: rgba(255, 255, 255, 0.9);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 16px;
-    padding: 2rem;
-    margin-top: 1rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-}
-
-.timestamp-info, .processed-by {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.timestamp-label, .processed-label {
-    font-weight: 600;
-    color: #7f8c8d;
-}
-
-.timestamp-value, .processed-value {
-    color: #34495e;
-    font-weight: 500;
-}
-
-/* 响应式设计 */
+/* 响应式 */
 @media (max-width: 768px) {
-    .result-container {
-        padding: 1rem;
-        margin: 1rem auto;
-    }
-
-    .result-grid {
-        grid-template-columns: 1fr;
-        gap: 1rem;
-    }
-
-    .result-footer {
-        flex-direction: column;
-        gap: 1rem;
-        text-align: center;
-    }
-
-    h1 {
-        font-size: 2rem;
-    }
-
-    .result-card {
-        padding: 1.5rem;
-    }
-
-    .header-right {
-        flex-direction: column;
-        gap: 0.5rem;
-    }
+  .overview-card {
+    flex-direction: column;
+    text-align: center;
+  }
+  .overview-tagline {
+    justify-content: center;
+  }
+  .dimensions-body {
+    grid-template-columns: 1fr;
+  }
+  .dimensions-radar {
+    display: flex;
+    justify-content: center;
+  }
+  .analysis-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

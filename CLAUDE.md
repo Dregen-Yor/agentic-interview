@@ -4,9 +4,105 @@
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-30 | 前端 Markdown + KaTeX 集成（marked + DOMPurify + katex）：新增 `utils/markdown.ts` / `MarkdownContent.vue` / `WriteEditor.vue`；FaceToFaceTestView 气泡走 markdown 渲染、输入区改为「写/预览」双 tab；新增 `.env.example` 模板 |
+| 2026-04-29 | 修复 P0 安全/契约 bug：SECRET_KEY 改环境变量、ScoringAgent 0 分契约恢复、抽取 `_fix_common_json_issues` 到 BaseAgent、WebSocket 后台任务异常处理与并发锁、前端处理 4 种消息类型 |
 | 2026-04-27 | 修复 P0 严重 bug、移除 `interview/views.py`、统一数据结构 / 连接池 / 日志 / JWT、前端 `baseURL` 抽取 |
 | 2026-04-24T15:33:52.266Z | 补充扫描：views.py、users.py、llm.py、rubrics.py、coordinator.py、各 agent、auth store、前端视图组件 |
 | 2026-04-24T15:26:51.503Z | 初始化 AI 上下文文档，添加 Mermaid 结构图、模块索引、面包屑导航 |
+
+---
+
+## 2026-04-29 安全/契约修复
+
+聚焦 5 个 P0/P1 问题，**不动 WebSocket 鉴权（C1）/ async 化（C3）/ settings 生产化（H1）**，下轮再处理。
+
+### 1. SECRET_KEY 强制环境变量（C2）
+
+`interview_backend/settings.py`：
+
+```python
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY 未配置 ...")
+```
+
+- 移除硬编码 `'django-insecure-%hjnf1=4j@bs(...)'`，缺失时进程 fail-fast。
+- 该密钥被 `interview/auth_utils.py` 用于签发 JWT，硬编码意味着任何人都能伪造任何用户 token。
+- 新增 `.env.example` 模板，提示用 `django.core.management.utils.get_random_secret_key()` 生成。
+- ⚠️ 当前 `.env` 中仍是占位符 `"django-insecure-xxxx"`，**必须替换为 50+ 字符高熵字符串后才能启动**。
+
+### 2. ScoringAgent 0 分契约恢复（C4）
+
+`interview/agents/scoring_agent.py:135`：
+
+```python
+# Before（破坏契约）
+result["score"] = max(1, min(10, result["score"]))
+# After（保留 0 分语义）
+score_val = int(result["score"])
+result["score"] = max(0, min(10, score_val))
+```
+
+- system prompt 第 39 行明确要求"无有效解答 → 直接给 0 分"，原 `max(1, ...)` 把 0 分硬抬到 1 分，使：
+  - `evaluate_interview_readiness` 中 `[s for s in scores if s > 0]` 永远不过滤；
+  - 平均分被假性 1 分污染拉高，决策失真。
+- 同时增加 `int()` + try/except 保护非数值输入。
+
+### 3. 抽取 `_fix_common_json_issues` 到 BaseAgent（H4）
+
+`interview/agents/base_agent.py` 新增模块级函数 `fix_common_json_issues(response)` 与 `BaseAgent._fix_common_json_issues()` 实例方法。
+
+5 处重复实现（500+ 行）整合为单一来源：
+
+| 文件 | 处理方式 |
+|------|---------|
+| `question_generator.py` | 删除自有实现，继承 BaseAgent |
+| `scoring_agent.py` | 删除自有实现，继承 BaseAgent |
+| `security_agent.py` | 删除自有实现，继承 BaseAgent |
+| `summary_agent.py` | 删除自有实现，继承 BaseAgent |
+| `resume_parser.py` | 非 BaseAgent 子类，保留方法但委托给 `fix_common_json_issues` 模块函数 |
+
+正则 `_TRAILING_COMMA_OBJ` / `_TRAILING_COMMA_ARR` 模块级预编译，避免每次调用重新编译。
+
+### 4. WebSocket 后台任务异常处理与并发锁（C6）
+
+`interview/consumers.py` 关键修复：
+
+- **强引用 + done_callback**：新增 `_pending_tasks: set[asyncio.Task]`，所有后台任务通过 `_spawn_task()` 启动，避免被 GC 中途丢弃；done_callback 统一记录异常并把错误回送前端。
+- **断连时取消任务**：`disconnect()` 中遍历 `_pending_tasks` 调用 `task.cancel()`，避免后端继续跑无意义的 LLM 调用。
+- **并发锁 `_answer_lock`**：`asyncio.Lock` 串行化 `start_interview` / `process_user_answer`，防止 coordinator 状态机被并发请求踩坑（同步阻塞调用 + 多次 `receive()` 的竞态）。
+- `_run_start_interview` 启动失败时回滚 `interview_started` 标志，让用户可以重试。
+
+> 注：本次未做 C3 async 化，同步 `model.invoke()` 仍会阻塞 event loop，但加锁后至少避免了 coordinator 内部状态被并发破坏。
+
+### 5. 前端处理 4 种 WebSocket 消息（C5）
+
+`frontend/src/views/FaceToFaceTestView.vue::onmessage`：
+
+- `JSON.parse` 加 try/catch，避免非 JSON 数据导致整个 handler 抛出。
+- 新增 `switch(data.type)` 分支处理：
+  - `message`：原正常面试消息流程；
+  - `security_termination`：展示违规原因 + `detected_issues`，置 `isCompleted=true`，UI 阻断后续输入；
+  - `security_warning`：仅在 `speechErrorText` 显示提示，面试继续；
+  - `error`：显示错误信息，`showAnswerButton=true` 允许重试；
+  - `raw_message` / 默认：console.warn 兜底。
+- 之前所有非 `message` 类型都被静默丢弃，导致候选人触发 prompt injection 后 UI 完全无反应。
+
+### 校验
+
+- `python -m py_compile`：`consumers.py` / 全部 agent / `settings.py` 通过。
+- `npm run type-check`：本次新增/修改代码 0 错误（`xfyun-asr.ts` 的 `crypto-js` 缺失为已存在历史问题，与本次无关）。
+- 字符串扫描：`django-insecure` 只剩 `settings.py` 错误信息中的引用；`max(1, min(10` 已全部清除。
+
+### 未处理（下轮 P0/P1）
+
+| 编号 | 问题 | 工作量 |
+|------|------|--------|
+| C1 | WebSocket connect 未校验 JWT，前端可伪造 username 用他人简历开面试 | 2-3h |
+| C3 | coordinator 同步 LLM 调用阻塞 WebSocket event loop（单轮最坏 90s+ 卡死全部用户） | 4-7h |
+| H1 | settings.py 仍 `DEBUG=True` / `ALLOWED_HOSTS=["*"]` / `CORS_ALLOW_ALL_ORIGINS=True` | 1h |
+| H2 | JWT 存 localStorage，存在 XSS 窃取风险 | 2h |
+| H5 | `security_agent.py` LLM 解析失败时按"安全/safe"字符串判断 is_safe，可绕过 | 0.5h |
 
 ---
 
@@ -294,6 +390,16 @@ VITE_API_BASE_URL=http://101.76.218.89:8000
 | `frontend/src/config.ts` | ✅ 新增 |
 | `frontend/.env.example` / `frontend/env.d.ts` | ✅ 新增 |
 | `frontend/src/stores/auth.ts` | ♻️ 使用 API_BASE_URL |
-| `frontend/src/views/FaceToFaceTestView.vue` | ♻️ 删除人脸验证旁路 + 使用 buildWebSocketUrl |
+| `frontend/src/views/FaceToFaceTestView.vue` | ♻️ 对话流 + WriteEditor + MarkdownContent + KaTeX |
+| `frontend/src/views/InterviewResultView.vue` | ♻️ 雷达图 + 环形分数 + 减色 + tag 化（2026-04-29） |
+| `frontend/src/views/LoginView.vue` | ♻️ 重设计（2026-04-29） |
+| `frontend/src/layout/MainLayout.vue` | ♻️ 用户菜单 + 折叠（2026-04-29） |
 | `frontend/src/views/ResumeRewriterView.vue` | ♻️ 使用 API_BASE_URL |
 | `frontend/src/views/FaceVerificationDialog.vue` | 🗑️ 已删除 |
+| `frontend/src/assets/main.css` | ✅ Design Tokens（2026-04-29） |
+| `frontend/src/components/RadarChart.vue` | ✅ 新增（SVG 雷达图，2026-04-29） |
+| `frontend/src/components/ScoreRing.vue` | ✅ 新增（CSS 环形分数，2026-04-29） |
+| `frontend/src/components/MarkdownContent.vue` | ✅ 新增（marked + DOMPurify + KaTeX，2026-04-30） |
+| `frontend/src/components/WriteEditor.vue` | ✅ 新增（写/预览双 tab，2026-04-30） |
+| `frontend/src/utils/markdown.ts` | ✅ 新增（占位符方案，2026-04-30） |
+| `.env.example`（项目根） | ✅ 新增（2026-04-29） |

@@ -319,7 +319,7 @@ Memento 风格 Case-Based Reasoning 检索层。
 
 ## 公共模式
 
-所有智能体均实现 `_fix_common_json_issues()`：去除 markdown 围栏、补全缺失 `}`、删除尾逗号。JSON 解析失败时均有降级返回值，不抛出异常。
+所有智能体共享 JSON 修复逻辑：单一来源在 `base_agent.fix_common_json_issues()`（模块级函数）+ `BaseAgent._fix_common_json_issues()`（实例方法包装）。功能：去除 markdown 围栏、补全缺失 `}`、删除尾逗号；正则模块级预编译。继承 `BaseAgent` 的 4 个 agent（question_generator / scoring / security / summary）自动获得，`ResumeParser` 因非 BaseAgent 子类保留 wrapper 委托给模块函数。JSON 解析失败时均有降级返回值，不抛出异常。
 
 ## 关键数据流
 
@@ -365,6 +365,7 @@ coordinator.process_answer()
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-29 | P0 契约修复：`ScoringAgent` 0 分契约恢复（`max(1,...)` → `max(0,...)` + int 类型守卫）；`_fix_common_json_issues` 5 处重复实现统一收敛到 `base_agent.fix_common_json_issues` 模块函数 + `BaseAgent` 实例方法；其余 4 个 agent（question_generator / scoring / security / summary）通过继承自动获得，`resume_parser`（非 BaseAgent 子类）保留 wrapper 委托给模块函数 |
 | 2026-04-27 | 修复 P0：scoring 字段路径、question_generator 题型一致性、summary datetime 冲突、security 过激/KeyError；新增 `qa_models.py` 统一 Q&A 结构；coordinator 切到 QATurn |
 | 2026-04-24T15:33:52.266Z | 补充各 agent 详细接口、输入输出、coordinator 流水线、终止条件 |
 | 2026-04-24T15:26:51.503Z | 初始化模块文档 |
