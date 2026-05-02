@@ -30,7 +30,12 @@
       </div>
 
       <!-- 对话气泡列表 -->
-      <ul v-else class="message-list">
+      <ul
+        v-else
+        class="message-list"
+        aria-live="polite"
+        aria-relevant="additions text"
+      >
         <li
           v-for="msg in messages"
           :key="msg.id"
@@ -276,6 +281,7 @@ function startInterview() {
   isProcessing.value = true;
   interviewStarted.value = true;
   connect();
+  nextTick(() => editorRef.value?.focus());
 }
 
 function sendAnswer() {
@@ -568,7 +574,7 @@ onUnmounted(() => {
 
 .toast-enter-active,
 .toast-leave-active {
-  transition: all 0.25s ease;
+  transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
 .toast-enter-from,
@@ -586,12 +592,23 @@ onUnmounted(() => {
     max-width: 85%;
   }
   .input-area {
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom));
     flex-direction: column;
     gap: var(--space-2);
   }
   .btn-send {
     align-self: stretch;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-fill,
+  .btn,
+  .typing-dot,
+  .toast-enter-active,
+  .toast-leave-active {
+    animation: none;
+    transition: none;
   }
 }
 </style>

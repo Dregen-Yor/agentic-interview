@@ -41,10 +41,17 @@
     <el-container>
       <el-header class="header">
         <div class="header-left">
-          <el-icon class="collapse-btn" @click="collapsed = !collapsed">
-            <Fold v-if="!collapsed" />
-            <Expand v-else />
-          </el-icon>
+          <button
+            type="button"
+            class="collapse-btn"
+            :aria-label="collapsed ? '展开侧边栏' : '收起侧边栏'"
+            @click="collapsed = !collapsed"
+          >
+            <el-icon aria-hidden="true">
+              <Fold v-if="!collapsed" />
+              <Expand v-else />
+            </el-icon>
+          </button>
           <span class="header-title">{{ $route.meta.title || 'Multi-Agent AI Interview' }}</span>
         </div>
 
@@ -53,7 +60,7 @@
             <span class="user-trigger">
               <span class="user-avatar">{{ avatarLetter }}</span>
               <span class="user-name">{{ username || '未登录' }}</span>
-              <el-icon><CaretBottom /></el-icon>
+              <el-icon aria-hidden="true"><CaretBottom /></el-icon>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
@@ -121,9 +128,10 @@ function onUserCommand(cmd: string) {
   height: 100vh;
 }
 
-/* ---- 侧边栏 ---- */
 .sidebar {
-  background-color: #1f2d3d;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 250, 255, 0.96));
+  border-right: 1px solid var(--color-border);
   transition: width 0.25s ease;
   overflow: hidden;
 }
@@ -133,81 +141,114 @@ function onUserCommand(cmd: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  color: #fff;
+  border-bottom: 1px solid var(--color-border-light);
+  color: var(--color-text-primary);
 }
 
 .brand-name {
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
-  letter-spacing: 0.02em;
+  letter-spacing: -0.01em;
 }
 
 .brand-icon {
-  font-size: var(--font-size-base);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  background-color: var(--color-primary);
+  color: #fff;
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-bold);
-  color: var(--color-primary);
 }
 
 .nav-menu {
   border-right: none;
   background-color: transparent;
+  padding: var(--space-3) var(--space-2);
 }
 
 .nav-menu :deep(.el-menu-item),
 .nav-menu :deep(.el-sub-menu__title) {
-  color: #bfcbd9;
+  height: 42px;
+  border-radius: var(--radius-md);
+  color: var(--color-text-regular);
+  margin-bottom: var(--space-1);
 }
 
 .nav-menu :deep(.el-menu-item:hover),
 .nav-menu :deep(.el-sub-menu__title:hover) {
-  background-color: #263445;
+  background-color: var(--color-primary-bg);
+  color: var(--color-primary);
 }
 
 .nav-menu :deep(.el-menu-item.is-active) {
   color: var(--color-primary);
-  background-color: #263445;
+  background-color: var(--color-primary-bg);
+  font-weight: var(--font-weight-semibold);
 }
 
 .nav-menu :deep(.el-sub-menu .el-menu-item) {
-  background-color: #1a2638;
+  background-color: transparent;
+  margin-left: var(--space-2);
 }
 
 .nav-menu :deep(.el-sub-menu .el-menu-item.is-active) {
   color: var(--color-primary);
-  background-color: #001528;
+  background-color: var(--color-primary-bg);
 }
 
-/* ---- Header ---- */
 .header {
   height: 60px;
-  background-color: var(--color-bg-card);
+  background-color: rgba(255, 255, 255, 0.86);
   border-bottom: 1px solid var(--color-border);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 var(--space-6);
+  backdrop-filter: blur(14px);
   box-shadow: none;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .collapse-btn {
-  font-size: 20px;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-card);
   color: var(--color-text-regular);
   cursor: pointer;
-  transition: color var(--transition-fast);
+  transition: color var(--transition-fast), border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .collapse-btn:hover {
   color: var(--color-primary);
+  border-color: var(--color-primary-light);
+  background-color: var(--color-primary-bg);
+}
+
+.collapse-btn:focus-visible {
+  outline: 3px solid var(--color-primary-light);
+  outline-offset: 2px;
 }
 
 .header-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
@@ -224,12 +265,14 @@ function onUserCommand(cmd: string) {
   gap: var(--space-2);
   cursor: pointer;
   padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
-  transition: background-color var(--transition-fast);
+  border-radius: var(--radius-full);
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.user-trigger:hover {
-  background-color: var(--color-bg-page);
+.user-trigger:hover,
+.user-trigger:focus-visible {
+  background-color: var(--color-primary-bg);
+  box-shadow: inset 0 0 0 1px var(--color-primary-light);
 }
 
 .user-avatar {
@@ -246,11 +289,14 @@ function onUserCommand(cmd: string) {
 }
 
 .user-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
 }
 
-/* ---- 内容区 ---- */
 .content-area {
   padding: 0;
   background-color: var(--color-bg-page);
@@ -264,5 +310,25 @@ function onUserCommand(cmd: string) {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+@media (max-width: 720px) {
+  .header {
+    padding: 0 var(--space-4);
+  }
+
+  .user-name {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .collapse-btn,
+  .user-trigger,
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: none;
+  }
 }
 </style>

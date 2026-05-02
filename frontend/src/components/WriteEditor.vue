@@ -25,6 +25,7 @@
     <div class="we-body">
       <textarea
         v-show="mode === 'write'"
+        :id="inputId"
         ref="textareaRef"
         class="we-textarea"
         :value="modelValue"
@@ -49,12 +50,14 @@ import MarkdownContent from './MarkdownContent.vue';
 const props = withDefaults(
   defineProps<{
     modelValue: string;
+    inputId?: string;
     placeholder?: string;
     disabled?: boolean;
     rows?: number;
     hint?: string;
   }>(),
   {
+    inputId: undefined,
     placeholder: '在此输入回答…支持 Markdown 与 LaTeX 公式（$x^2$ 或 $$\\int x dx$$）',
     disabled: false,
     rows: 3,
@@ -134,7 +137,7 @@ defineExpose({ focus });
   font-weight: var(--font-weight-medium);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .we-tab:hover {
@@ -189,5 +192,12 @@ defineExpose({ focus });
   margin: 0;
   color: var(--color-text-placeholder);
   font-style: italic;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .write-editor,
+  .we-tab {
+    transition: none;
+  }
 }
 </style>
