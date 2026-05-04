@@ -4,11 +4,163 @@
 
 | 日期 | 变更 |
 |------|------|
+| 2026-05-04 | **W1-W3 论文驱动重构（v3）+ AES 实验模块**：(1) 集成 5 篇论文（MTS / RULERS / CISC / CoVe / PER + BAS）；(2) Schemas v3 强制内部一致性 + evidence 三元组；(3) ScoringAgent 改 5 维度独立 + 双模型 ensemble (`[doubao, gemini]`) + RAG anchors；(4) SummaryAgent 加 `decision_evidence` / `boundary_case` / `requires_human_review`；(5) graph.py 6 节点 pure-function 拓扑；(6) **新增 QuestionVerifier**（CoVe factor+revise）；(7) PER importance 替换手工 0.5/0.3/0.2；(8) 修复 4 个 P0 内部一致性漏洞（rubric_clause 强制覆盖 / overall_score = mean / decision_evidence turn_index 上界 / answer_snippet fuzzy 校验）；(9) **新增 `interview/aes/` 实验模块**（不影响面试逻辑，EMNLP 2026 双层叙事 ASAP 2.0 instantiation）；(10) **前端 v3 同步**：新增 `types/scoring.ts`，`InterviewResultView` 加决策证据卡 + 复核横幅；(11) 单测 0 → 151；(12) 新增 4 份文档（explainability_paper / emnlp2026_strategy / emnlp2026_paper_skeleton + 本 changelog）|
 | 2026-04-30 | 前端 Markdown + KaTeX 集成（marked + DOMPurify + katex）：新增 `utils/markdown.ts` / `MarkdownContent.vue` / `WriteEditor.vue`；FaceToFaceTestView 气泡走 markdown 渲染、输入区改为「写/预览」双 tab；新增 `.env.example` 模板 |
 | 2026-04-29 | 修复 P0 安全/契约 bug：SECRET_KEY 改环境变量、ScoringAgent 0 分契约恢复、抽取 `_fix_common_json_issues` 到 BaseAgent、WebSocket 后台任务异常处理与并发锁、前端处理 4 种消息类型 |
 | 2026-04-27 | 修复 P0 严重 bug、移除 `interview/views.py`、统一数据结构 / 连接池 / 日志 / JWT、前端 `baseURL` 抽取 |
 | 2026-04-24T15:33:52.266Z | 补充扫描：views.py、users.py、llm.py、rubrics.py、coordinator.py、各 agent、auth store、前端视图组件 |
 | 2026-04-24T15:26:51.503Z | 初始化 AI 上下文文档，添加 Mermaid 结构图、模块索引、面包屑导航 |
+
+---
+
+## 2026-05-04 论文驱动重构（v3）
+
+> 完整论文化叙述见 [`docs/explainability_paper.md`](./docs/explainability_paper.md)。
+> EMNLP 2026 投稿策略见 [`docs/emnlp2026_strategy.md`](./docs/emnlp2026_strategy.md) + [`docs/emnlp2026_paper_skeleton.md`](./docs/emnlp2026_paper_skeleton.md)。
+
+### 集成的 5 篇论文 + 1 个补充
+
+| 论文 | 落地位置 | 关键产物 |
+|------|---------|---------|
+| [MTS (Lee 2024)](https://arxiv.org/abs/2404.04941) | `scoring_agent.py` + `prompts/scoring_dimension.yaml` | 5 维度独立 prompt，每维度单独 LLM 调用 |
+| [RULERS (Hong 2026)](https://arxiv.org/abs/2601.08654) | `schemas.DimensionScore` 强制 evidence_quote + rubric_clause | schema-enforced evidence anchoring |
+| [CISC (2025)](https://arxiv.org/abs/2502.06233) | `scoring_agent._aggregate_ensemble` | confidence-weighted 多模型聚合 + agreement |
+| [CoVe (Dhuliawala 2024)](https://arxiv.org/abs/2309.11495) | `question_verifier.py` + `next_question_node` | factor+revise 5 个验证轴 |
+| [PER (Schaul 2015)](https://arxiv.org/abs/1511.05952) | `memory/store._compute_importance` | rank-based α=0.6 替代 0.5/0.3/0.2 手工权重 |
+| [BAS (2026)](https://arxiv.org/html/2604.03216) | `summary_agent._validate_summary_result` | boundary case + requires_human_review 强制规则 |
+
+### 核心 Schema 升级（v3，破坏性，前端已同步）
+
+```python
+# interview/agents/schemas.py
+class DimensionScore(BaseModel):  # 单维度（MTS + RULERS）
+    dimension: Literal[5 个维度]
+    level: Literal["LOW", "MEDIUM", "HIGH"]
+    score: int                # model_validator 强制 ≤ DIMENSION_MAX_SCORE[dim]
+    evidence_quote: str       # 必填，fuzzy match 校验在 answer 中
+    rubric_clause: str        # 由 ScoringAgent 强制覆盖为 RUBRIC_DIMENSIONS canonical
+    confidence: Literal["high", "medium", "low"]
+    model_name: Optional[str]
+
+class ScoringOutput(BaseModel):
+    score: int = sum(dim.score for dim in dimensions)  # model_validator 强制
+    dimensions: List[DimensionScore]      # min/max 5 项
+    agreement: float                      # CISC 多模型一致性
+    confidence_level / requires_human_review / fallback_used
+
+class DecisionEvidence(BaseModel):  # RULERS triple
+    turn_index, dimension, observed_level, rubric_clause, answer_snippet, impact
+
+class SummaryOutput(BaseModel):
+    decision_evidence: List[DecisionEvidence]  # min_length=3
+    boundary_case / decision_confidence / requires_human_review / abstain_reason
+```
+
+### LangGraph 6 节点拓扑（pure function）
+
+```
+START → security → [block?] → finalize_security
+                  └→ scoring → persist → readiness → [ready?] → finalize_normal
+                                                    └→ retrieval → next_question → END
+```
+
+仅 `persist_node` 与 `next_question_node` 允许 mutate `InterviewSession`。LangGraph checkpoint collection 升级到 `langgraph_checkpoints_v3`（旧 collection 自然过期）。
+
+### P0 内部一致性修复（4 项）
+
+1. **P0-1 + P2-2**：`ScoringAgent._score_one` 中 LLM 给的 `rubric_clause` 与 `level` 不一致（或 paraphrase rubric）→ 用 `RUBRIC_DIMENSIONS[dim]["levels"][level]` 强制覆盖
+2. **P0-2**：`SummaryAgent._validate_summary_result` 中 LLM 给的 `overall_score` 与 `mean(qa_history.score_details.score)` 偏差 > 0.5 → 强制覆盖为 mean，并在 `abstain_reason` 中标注
+3. **P0-3**：`decision_evidence.turn_index` 越界 → 过滤 + `_pad_evidence_with_placeholders` 自动补到 ≥3 条
+4. **P0-4**：`decision_evidence.answer_snippet` fuzzy match 不在 `qa_history[turn_index].answer` 中 → 过滤
+
+### 双模型 Ensemble + RAG anchors（W2）
+
+`interview/consumers.py`：
+
+```python
+models = {
+    "question_model": chatgpt_model,
+    "scoring_models": [doubao_model, gemini_model],  # 不同 API 来源
+    "security_model": gemini_model,
+    "summary_model": gemini_model,
+}
+```
+
+ScoringAgent `aprocess` 自动调用 `MemoryRetriever.retrieve_similar_cases(k=2, exclude_session_id=...)` 注入 RAG anchors（避免 self-leak）。
+
+### CoVe Verifier（W3.2）
+
+`interview/agents/question_verifier.py`：5 个独立验证轴
+- 同步规则：`length` (≤80) / `type_quota` (每类型 ≤2)
+- LLM 异步：`resume_anchor` / `no_repeat` / `difficulty_match`
+- factor+revise：失败 → 把 violations 注入 QuestionGenerator 二次调用
+
+soft-fail 策略：verifier 异常视为通过（不阻塞主流程，与 Guardrails 的 fail-closed 相反）。
+
+### PER Importance 替换（W3.3）
+
+```python
+# interview/agents/memory/store.py::_compute_importance
+priority = (|score - baseline| + 0.01) ** 0.6 / NORM_DIVISOR + difficulty_bonus + security_bonus
+# baseline = session.get_average_score()（个性化），首轮默认 5.0
+```
+
+LangGraph `persist_node` 调用 `save_turn(...)` 时传入 `baseline_score`。
+
+### AES 实验模块（不影响面试逻辑）
+
+新增 `interview/aes/` 模块作为 EMNLP 2026 论文双层叙事的 ASAP 2.0 instantiation：
+
+```
+interview/aes/
+├── __init__.py / traits.py     ← 5 ASAP traits + LOW/MEDIUM/HIGH rubric
+├── schemas.py                  ← TraitScore / EssayScoringOutput（与 DimensionScore 同构但独立）
+├── pipeline.py                 ← EssayScoringPipeline (trait × N 模型并行 + CISC + schema enforcement)
+├── prompts/aes_trait_scoring.yaml + prompt_loader.py
+├── metrics.py                  ← 5 个 explainability metrics
+├── data_loader.py              ← ASAP 2.0 CSV 加载 + QWK 计算
+├── baselines.py                ← VanillaJudge / GEvalJudge / MTSOnlyJudge
+└── run_experiment.py           ← CLI 实验入口
+```
+
+**核心设计**：与 `interview/agents/` 共享 `interview.agents.utils.validate_quote_in_answer`，但其余完全独立——AES 不依赖任何面试场景代码，面试 WebSocket 链路 0 改动。
+
+CLI 用法：
+
+```bash
+# 跑 50 essays × 4 systems
+uv run python -m interview.aes.run_experiment \
+    --asap-csv data/asap_2.0/training.tsv \
+    --essay-set 8 --limit 50 \
+    --systems schemajudge,vanilla,geval,mts_only \
+    --output results/asap_set8_n50.json
+```
+
+### 测试覆盖
+
+| 文件 | 数量 | 覆盖 |
+|------|------|------|
+| `test_scoring_mts.py` | 37 | DimensionScore / ScoringOutput 校验 + ensemble 聚合 + fallback |
+| `test_summary_evidence.py` | 24 | boundary detect + decision_evidence 必填 + 安全终止 |
+| `test_scoring_ensemble.py` | 8 | 双模型 ensemble + RAG anchors 注入 + soft fail |
+| `test_question_verifier.py` | 22 | CoVe 同步规则 + LLM 验证 soft-fail |
+| `test_per_importance.py` | 7 | PER 公式 + 个性化 baseline + monotonic |
+| `test_graph_pure.py` | 6 | 节点 pure function + persist_node 单点 mutate |
+| `test_p0_consistency.py` | 20 | rubric_clause 覆盖 + overall_score 一致性 + evidence 校验 |
+| `test_aes_module.py` | 33 | AES traits / schemas / pipeline / metrics / baselines / data_loader |
+| **合计** | **151** | (旧 0 → 新 151) |
+
+跑全套：`uv run python -m unittest discover interview.tests`
+
+### 前端 v3 同步（破坏性）
+
+| 文件 | 类型 | 内容 |
+|------|------|------|
+| `frontend/src/types/scoring.ts` | **新增** | `DimensionScore` / `DecisionEvidence` / `ScoringResult` / `SummaryResult` + `extractDimensionsForRadar()`（v2/v3 兼容工具） |
+| `frontend/src/views/InterviewResultView.vue` | 重写 | 新增「人工复核横幅」「决策证据卡」「维度证据片段」 |
+| `frontend/src/views/FaceToFaceTestView.vue` | 小改 | 进度条加单轮 confidence + agreement + ⚠ 复核标记 + boundary toast |
+
+`npm run type-check` + `npm run build` 0 错误，3.31s 构建通过。
 
 ---
 

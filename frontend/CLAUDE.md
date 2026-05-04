@@ -148,6 +148,7 @@ npm run test:unit  # Vitest
 
 | 日期 | 变更 |
 |------|------|
+| 2026-05-04 | **v3 schema 同步**（破坏性，配套后端 W1-W3）：新增 `src/types/scoring.ts`（`DimensionScore` / `DecisionEvidence` / `ScoringResult` / `SummaryResult` + `extractDimensionsForRadar()` 工具函数，v2/v3 双兼容）；`InterviewResultView.vue` 重写：新增「人工复核横幅」（`requires_human_review` 触发）+ 「决策证据卡」（按 impact 着色的 `decision_evidence` 列表）+ 维度证据片段展示（每 trait 显示 `evidence_quote` 与 `confidence`）；`FaceToFaceTestView.vue` 进度条新增单轮 `scoring_confidence` / `scoring_agreement` / 复核标记 + 边界 toast；`type-check` + `build` 0 错误（3.31s） |
 | 2026-04-30 | Markdown + KaTeX 集成：`marked@18` / `dompurify@3.4` / `katex@0.16` 三个依赖；新增 `src/utils/markdown.ts`（占位符方案防 marked 干扰公式） + `MarkdownContent.vue`（v-html 渲染容器，深色气泡反色）+ `WriteEditor.vue`（写/预览双 tab，Ctrl+Enter / Ctrl+P）；`FaceToFaceTestView` 气泡走 markdown、输入区改为 WriteEditor；`main.ts` 全局加载 `katex/dist/katex.min.css` |
 | 2026-04-29 | UI 改造：新增 design tokens（`assets/main.css`）、`RadarChart` / `ScoreRing` SVG 组件；FaceToFaceTestView 改为对话流 + 进度条 + 输入框常驻 + Toast 警告 + 完成后导航至结果页；InterviewResultView 减色 + 雷达图 + 环形分数 + tag 化优劣；LoginView 重设计；MainLayout header 加用户菜单与折叠按钮 |
 | 2026-04-27 | 新增 `config.ts` 抽取 baseURL；删除人脸验证旁路与 `FaceVerificationDialog.vue`；3 个视图组件切到 `API_BASE_URL` / `buildWebSocketUrl` |

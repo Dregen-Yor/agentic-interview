@@ -114,7 +114,49 @@ def some_view(request):
 
 | 日期 | 变更 |
 |------|------|
+| 2026-05-04 | **W1-W3 论文驱动重构（v3）**：`consumers.py` scoring 改双模型 ensemble (`[doubao, gemini]`)；新增 `agents/utils.py`（共享 `validate_quote_in_answer`，3-gram recall fuzzy match）；`agents/scoring_agent.py` 改 MTS 5 维度独立 + CISC ensemble + RAG anchors；`agents/summary_agent.py` 加 `decision_evidence`/`boundary_case`/`requires_human_review`；新增 `agents/question_verifier.py` (CoVe factor+revise)；`agents/graph.py` 重写为 6 节点 pure-function 拓扑；`agents/memory/store.py` `_compute_importance` 改 PER (`α=0.6`) + 个性化 baseline；P0 一致性修复（rubric_clause 强制覆盖 + overall_score=mean + decision_evidence turn_index/snippet 校验）；新增 `aes/` 实验模块（不依赖面试代码）；测试 0 → 151 |
 | 2026-04-29 | `consumers.py` 重构：新增 `_pending_tasks` 强引用集 + `_spawn_task()` done_callback 异常处理；`_answer_lock` 串行化 `start_interview` / `process_user_answer`，避免 coordinator 状态机被并发踩坑；`disconnect()` 取消未完成任务 |
 | 2026-04-27 | 删除 `views.py`、新增 `auth_utils.py`、`users.py` 切到共享连接池 + `@jwt_required`、文档同步更新 |
 | 2026-04-24T15:33:52.266Z | 补充 views.py、users.py、llm.py、rubrics.py 详细说明 |
 | 2026-04-24T15:26:51.503Z | 初始化模块文档 |
+
+---
+
+## 2026-05-04 v3 重构 — 子模块速查
+
+| 子模块 | 角色 |
+|--------|------|
+| `agents/utils.py` | **新增** 共享工具：`validate_quote_in_answer` (3-gram recall ≥ 0.6) + `normalize_text`。被 `scoring_agent` / `summary_agent` / `aes/` 复用。`_NO_SOLUTION_MARKERS` 含 `(no valid solution)` / `(no valid essay)` / fallback / baseline 占位 |
+| `agents/schemas.py` v3 | `DimensionScore`（强制 evidence_quote + rubric_clause + score 上限）/ `ScoringOutput`（model_validator 强制 `score == sum(dim.score)` + 5 维度齐全）/ `DecisionEvidence` / `SummaryOutput`（`min_length=3` evidence + boundary_case + requires_human_review）/ `QuestionVerificationOutput` |
+| `agents/scoring_agent.py` | MTS 5 维度独立 + CISC ensemble + RAG anchors。`__init__(models: List, memory_retriever)`。`_score_one` 强制 rubric_clause 覆盖（P0-1）+ quote fuzzy 校验（confidence 降级）+ dimension 一致性纠正 |
+| `agents/summary_agent.py` | 输入 qa_history（含 dimensions），输出 `decision_evidence` ≥3。`_validate_summary_result` 一次性解决 P0-2/3/4：overall_score 偏差 > 0.5 覆盖 / turn_index 越界过滤 / answer_snippet fuzzy 校验失败过滤 / 不足 3 条 padding 补全 |
+| `agents/question_verifier.py` | **新增** CoVe verifier：5 个验证轴（length / type_quota 同步规则 + resume_anchor / no_repeat / difficulty_match LLM 异步并行）。soft-fail：LLM 异常视为通过 |
+| `agents/graph.py` | 6 节点 pure-function 拓扑 (security / scoring / persist / readiness / retrieval / next_question + finalize_normal / finalize_security)。`persist_node` 是唯一允许 mutate `InterviewSession` + 写 MongoDB 的节点。Checkpoint collection 升级为 `langgraph_checkpoints_v3` |
+| `agents/coordinator.py` | 接受 `scoring_models: List[ChatOpenAI]`（向后兼容 `scoring_model`）；实例化 `QuestionVerifier`（默认 verifier_model = question_model）；`_ensure_graph` 注入 verifier |
+| `agents/memory/store.py` | `_compute_importance` PER 风格：`(td_error+ε)^0.6 / NORM_DIVISOR + difficulty_bonus + security_bonus`，TD-error = `|score - baseline|`，baseline 由 `persist_node` 传入（个性化） |
+| `aes/` | **新增** EMNLP 2026 实验模块。完全独立，仅复用 `agents.utils.validate_quote_in_answer` |
+
+### `aes/` 子模块（独立实验目录）
+
+```
+interview/aes/
+├── __init__.py / traits.py     ← 5 ASAP traits (ideas/organization/voice/word_choice/conventions) × 1-6 范围 × LOW/MEDIUM/HIGH rubric
+├── schemas.py                  ← TraitScore / EssayScoringOutput（与 DimensionScore 同构但 dimension 字段绑 ASAP traits）
+├── pipeline.py                 ← EssayScoringPipeline（trait × N 模型并行 + CISC + schema enforcement）
+├── prompts/aes_trait_scoring.yaml + prompt_loader.py
+├── metrics.py                  ← 5 个 explainability metrics: evidence_grounded_recall / cross_trait_consistency / boundary_calibration_ece / counterfactual_stability / reviewer_trust（人工协议）
+├── data_loader.py              ← ASAP 2.0 CSV 加载 + QWK / Pearson 计算（zero-dependency）
+├── baselines.py                ← VanillaJudge (1 LLM call) / GEvalJudge (CoT/trait 但无 schema) / MTSOnlyJudge (multi-trait 但无 schema)
+└── run_experiment.py           ← CLI: --systems schemajudge,vanilla,geval,mts_only --asap-csv ... --essay-set 8 --limit 50
+```
+
+不依赖任何 `interview/agents/` 状态，不影响 WebSocket 面试链路。详见 [`docs/explainability_paper.md`](../docs/explainability_paper.md) §6 与 [`docs/emnlp2026_paper_skeleton.md`](../docs/emnlp2026_paper_skeleton.md)。
+
+### 双层叙事的 trait-agnostic 论证（论文 §3）
+
+paper 主张 SchemaJudge 是 trait-agnostic 的——证据：
+- **面试场景**：`agents/scoring_agent.py` 用 `DimensionScore`（5 维度 = math_logic 等）
+- **AES 场景**：`aes/pipeline.py` 用 `TraitScore`（5 trait = ideas 等）
+- **共享核心机制**：`validate_quote_in_answer` / schema-enforced rubric 覆盖 / CISC ensemble / fallback 模式 — 同一逻辑跨两个 wrapper
+
+reviewer 可 diff 两个 pipeline 文件验证。

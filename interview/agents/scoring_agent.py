@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage
@@ -32,6 +31,7 @@ from .base_agent import BaseAgent
 from .cache import cached_system_message
 from .qa_models import get_score
 from .schemas import DIMENSION_MAX_SCORE, DimensionScore, ScoringOutput
+from .utils import validate_quote_in_answer as _validate_quote_in_answer_impl
 
 
 # 5 维度顺序固定（与 schemas.py / rubrics.py 一致）
@@ -42,24 +42,6 @@ _CONFIDENCE_WEIGHTS = {"high": 1.0, "medium": 0.6, "low": 0.3}
 
 # Agreement 阈值（低于此值 → requires_human_review）
 _AGREEMENT_THRESHOLD = 0.5
-
-# Quote fuzzy match 阈值（字符 3-gram Jaccard）
-# 中文 3-gram 重叠较稀疏，0.4 在「verbatim 加少量 paraphrase」与「LLM 幻觉 quote」间取得平衡
-_QUOTE_JACCARD_MIN = 0.4
-
-# Quote 切换 substring vs Jaccard 的字符长度阈值
-_QUOTE_SHORT_CUTOFF = 8
-
-# 0-分契约的特殊标记（永远视为合法 evidence_quote）
-_NO_SOLUTION_MARKERS = (
-    "no valid solution",
-    "no answer",
-    "(empty)",
-    "无有效解答",
-    "无有效内容",
-    "未答",
-    "无回答",
-)
 
 
 def _format_dim_rubric(dim_key: str) -> str:
@@ -73,9 +55,8 @@ def _format_dim_rubric(dim_key: str) -> str:
     return "\n".join(lines)
 
 
-def _normalize(text: str) -> str:
-    """quote fuzzy match 归一化：去标点、空白、转小写"""
-    return re.sub(r"[\s\W_]+", "", text or "").lower()
+# 注：fuzzy match / normalize 已统一收敛到 interview.agents.utils（2026-05-04 重构）
+# _validate_quote_in_answer_impl 是从 utils.validate_quote_in_answer 的别名
 
 
 class ScoringAgent(BaseAgent):
@@ -231,7 +212,30 @@ class ScoringAgent(BaseAgent):
 
         result: DimensionScore = await self._structured_models[model_idx].ainvoke(messages)
 
-        # quote fuzzy match：不在 answer 中 → 降 confidence（不抛异常，符合 RULERS soft fallback）
+        # ============================================================
+        # P0-1 + P2-2: 强制 rubric_clause 与 level 对应（覆盖 LLM 输出）
+        # ============================================================
+        # LLM 可能：
+        # (a) 给出 level=HIGH 但 rubric_clause 是 LOW 描述（自相矛盾，P0-1）
+        # (b) 给出 rubric 的 paraphrase 而非精确文字（漂移风险，P2-2）
+        # 修复：直接用 RUBRIC_DIMENSIONS 中的精确 LOW/MEDIUM/HIGH 描述覆盖 LLM 输出。
+        # 这样 LLM 只决定 level + score，rubric_clause 由代码保证与 level 一致。
+        canonical_rubric = (
+            RUBRIC_DIMENSIONS.get(dim_key, {}).get("levels", {}).get(result.level)
+        )
+        if canonical_rubric and result.rubric_clause != canonical_rubric:
+            self.logger.debug(
+                "rubric_clause 与 level 不一致（dim=%s level=%s），覆盖：LLM='%s...' → canonical='%s...'",
+                dim_key,
+                result.level,
+                (result.rubric_clause or "")[:40],
+                canonical_rubric[:40],
+            )
+            result = result.model_copy(update={"rubric_clause": canonical_rubric})
+
+        # ============================================================
+        # quote fuzzy match：不在 answer 中 → 降 confidence（RULERS soft fallback）
+        # ============================================================
         if not self._validate_quote_in_answer(result.evidence_quote, answer):
             self.logger.debug(
                 "Quote 不在 answer 中（dim=%s, model=%d），降 confidence: quote=%s",
@@ -239,28 +243,28 @@ class ScoringAgent(BaseAgent):
                 model_idx,
                 (result.evidence_quote or "")[:30],
             )
-            result.confidence = "low"
+            result = result.model_copy(update={"confidence": "low"})
 
+        # ============================================================
         # 强制 dimension 与请求一致（防止 LLM 写错维度 key）
+        # ============================================================
         if result.dimension != dim_key:
             self.logger.warning(
                 "LLM 返回的 dimension=%s 与请求 %s 不符，已纠正",
                 result.dimension,
                 dim_key,
             )
-            # 注意：不能直接 result.dimension = dim_key，因为 model_validator 会重跑
-            # 用 model_copy + update 重新构造一个合法实例
             cap = DIMENSION_MAX_SCORE[dim_key]
             corrected_score = min(result.score, cap)
             result = result.model_copy(update={"dimension": dim_key, "score": corrected_score})
 
         # 记录模型来源
         try:
-            result.model_name = getattr(
-                self.models[model_idx], "model_name", f"model_{model_idx}"
+            result = result.model_copy(
+                update={"model_name": getattr(self.models[model_idx], "model_name", f"model_{model_idx}")}
             )
         except Exception:
-            result.model_name = f"model_{model_idx}"
+            result = result.model_copy(update={"model_name": f"model_{model_idx}"})
         return result
 
     def _aggregate_ensemble(
@@ -351,42 +355,8 @@ class ScoringAgent(BaseAgent):
 
     @staticmethod
     def _validate_quote_in_answer(quote: str, answer: str) -> bool:
-        """fuzzy match：归一化后 substring 或字符 3-gram Jaccard ≥ 阈值。
-
-        - 0 分契约的特殊标记（"(no valid solution)" 等）永远视为合法
-        - 短引用（< 8 字符）走严格 substring（避免歧义）
-        - 长引用走 Jaccard
-        """
-        if not quote:
-            return False
-        # 0 分契约的特殊标记
-        ql = quote.lower()
-        if any(s in ql for s in _NO_SOLUTION_MARKERS):
-            return True
-
-        nq = _normalize(quote)
-        na = _normalize(answer)
-        if not nq or not na:
-            return False
-
-        # 严格 substring（短引用）
-        if len(nq) < _QUOTE_SHORT_CUTOFF:
-            return nq in na
-
-        # 长引用：先尝试 substring，再 Jaccard
-        if nq in na:
-            return True
-        if len(nq) < 3 or len(na) < 3:
-            return nq in na
-        ngrams_q = {nq[i : i + 3] for i in range(len(nq) - 2)}
-        ngrams_a = {na[i : i + 3] for i in range(len(na) - 2)}
-        if not ngrams_q:
-            return False
-        intersect = len(ngrams_q & ngrams_a)
-        union = len(ngrams_q | ngrams_a)
-        if union == 0:
-            return False
-        return (intersect / union) >= _QUOTE_JACCARD_MIN
+        """fuzzy match 委托给 utils.validate_quote_in_answer（保持向后兼容的静态方法签名）"""
+        return _validate_quote_in_answer_impl(quote, answer)
 
     # ------------------------------------------------------------
     # RAG anchors

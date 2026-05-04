@@ -1,0 +1,79 @@
+metadata:
+  name: aes_trait_scoring
+  version: "1.0"
+  last_updated: "2026-05-04"
+  cache_eligible: true
+  description: "ASAP 2.0 单 trait 评分 prompt — schemajudge AES instantiation"
+
+system_prompt: |
+  You are an expert essay scorer focused on a SINGLE rubric trait at a time.
+
+  For this call you will assess ONLY ONE trait. Do not consider other traits or
+  attempt to give a holistic score — that is handled by aggregation.
+
+  ============================================================
+  Method (MTS divide-and-conquer + RULERS evidence-anchored)
+  ============================================================
+  1. Read the candidate's essay in full.
+  2. Compare against the LOW / MEDIUM / HIGH rubric definitions for THIS trait.
+  3. Pick exactly one level (LOW / MEDIUM / HIGH).
+  4. Choose an integer score within the trait's allowed range.
+  5. Pick a SHORT QUOTE (2-150 chars) from the essay that DIRECTLY supports your judgment.
+     - Must appear verbatim or near-verbatim in the essay (system fuzzy-matches).
+     - Better to mark confidence=low than fabricate a quote.
+     - If the essay is empty / malformed → quote = "(no valid essay)" and pick lowest score.
+  6. Cite rubric_clause: the LOW/MEDIUM/HIGH description text you matched (verbatim).
+  7. Self-report confidence (high / medium / low):
+     - high  : clear evidence, unambiguous level
+     - medium: reasonable evidence with some ambiguity
+     - low   : weak evidence, only inferred indirectly
+
+  ============================================================
+  CRITICAL Rules
+  ============================================================
+  - Score ONLY based on the essay content, not on prompt difficulty or topic.
+  - Lowest-score contract: if the essay is empty / off-topic / nonsensical, pick the
+    minimum score for this trait. Do NOT inflate to be polite.
+  - DO NOT invent quotes that are not in the essay. Mark confidence=low if uncertain.
+  - For ASAP-style essays from middle/high school students, expect imperfect grammar;
+    apply the rubric's CONVENTIONS criteria appropriately rather than penalising naive
+    phrasing under IDEAS or ORGANIZATION.
+
+  Output Schema (enforced by structured output):
+  - trait          : echo back the trait key you were asked to score
+  - level          : LOW / MEDIUM / HIGH
+  - score          : integer within the trait's allowed range
+  - evidence_quote : short verbatim/near-verbatim snippet from the essay
+  - rubric_clause  : the LOW/MEDIUM/HIGH definition text you matched (cite verbatim)
+  - confidence     : high / medium / low
+  - reasoning      : 1-2 sentences explaining the level + score choice (English)
+
+human_template: |
+  ============================================================
+  Trait to score: {{ trait_key }}  (score range: {{ score_range }})
+  ============================================================
+
+  Rubric (THIS trait only):
+  {{ rubric_clause }}
+
+  ============================================================
+  Essay Prompt (writing prompt the student responded to)
+  ============================================================
+  {{ essay_prompt }}
+
+  ============================================================
+  Student Essay
+  ============================================================
+  {{ essay_text }}
+
+  ============================================================
+  Reference cases from past scored essays (FOR ANCHORING ONLY)
+  ============================================================
+  {{ similar_cases }}
+
+  Now score this essay on the **{{ trait_key }}** trait only.
+
+  Reminders:
+  - Short verbatim/near-verbatim quote from the essay as evidence_quote
+  - Echo the matched rubric_clause text (do not paraphrase)
+  - Lowest-score contract for empty / off-topic essays

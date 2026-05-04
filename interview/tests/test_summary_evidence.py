@@ -204,7 +204,8 @@ class ValidateSummaryResult(unittest.TestCase):
 
     def test_high_confidence_no_review(self):
         data = self._llm_data(score=7.6)  # 非边界
-        qa = [_qa_with_dims(agreement=0.9, conf="high") for _ in range(3)]
+        # qa score=8（mean=8.0），LLM 给 7.6 → 差 0.4 < 0.5 → 不覆盖；7.6 不在 boundary
+        qa = [_qa_with_dims(score=8, agreement=0.9, conf="high") for _ in range(3)]
         out = self.sa._validate_summary_result(data, 7.6, qa)
         self.assertFalse(out["requires_human_review"])
         self.assertEqual(out["decision_confidence"], "high")
@@ -295,7 +296,8 @@ class MockedSummary(unittest.IsolatedAsyncioTestCase):
         self.sa._structured_model.ainvoke = AsyncMock(
             return_value=self._make_summary_response(score=7.6)
         )
-        qa = [_qa_with_dims(score=7, agreement=0.9, conf="high") for _ in range(5)]
+        # qa score=8（mean=8.0），LLM 给 7.6 → 差 0.4 < 0.5 容忍 → 不覆盖；7.6 也不在 boundary 区间内
+        qa = [_qa_with_dims(score=8, agreement=0.9, conf="high") for _ in range(5)]
         result = await self.sa.aprocess({
             "candidate_name": "张三",
             "resume_data": {},

@@ -21,10 +21,15 @@ from typing import Any, Dict, List, Optional
 
 from .base_agent import BaseAgent
 from .schemas import DecisionEvidence, SummaryOutput
+from .utils import validate_quote_in_answer
 
 
 # 边界带（与 prompt 中保持一致）
 _BOUNDARY_BANDS = [(4.5, 5.5), (6.5, 7.5), (8.0, 9.0)]
+
+# overall_score 与 qa_history mean 的容忍偏差（P0-2）
+# LLM 可能整体校准（看到 boundary case 整体压低/抬高），允许 ±0.5；超过则强制覆盖
+_OVERALL_SCORE_TOLERANCE = 0.5
 
 # 维度顺序
 _DIM_KEYS = [
@@ -121,6 +126,24 @@ def _any_low_confidence(qa_history: List[Dict[str, Any]]) -> bool:
         (qa.get("score_details") or {}).get("confidence_level") == "low"
         for qa in qa_history
     )
+
+
+def _compute_actual_mean(qa_history: List[Dict[str, Any]]) -> Optional[float]:
+    """
+    从 qa_history 提取所有有效 score（>0），返回算术平均；
+    无有效分数时返回 None（让调用方决定 fallback）。
+
+    用于 P0-2 一致性校验：overall_score 必须 ≈ 这个 mean。
+    """
+    scores: List[float] = []
+    for qa in qa_history:
+        sd = qa.get("score_details") or {}
+        s = sd.get("score")
+        if isinstance(s, (int, float)) and s > 0:
+            scores.append(float(s))
+    if not scores:
+        return None
+    return sum(scores) / len(scores)
 
 
 class SummaryAgent(BaseAgent):
@@ -295,22 +318,96 @@ class SummaryAgent(BaseAgent):
         average_score: float,
         qa_history: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """对齐分数与等级，自动校正 boundary_case / requires_human_review"""
-        # 1. overall_score 缺失时回填
-        if data.get("overall_score") is None:
-            data["overall_score"] = round(float(average_score), 1)
+        """对齐分数与等级，自动校正 boundary_case / requires_human_review
+
+        v3.1 新增：
+        - P0-2: overall_score 必须 ≈ mean(qa scores)，超过容忍度则强制覆盖
+        - P0-3: decision_evidence.turn_index 必须在 [0, len(qa_history)) 范围内
+        - P0-4: decision_evidence.answer_snippet 必须 fuzzy match 该轮的 answer
+        """
+        n_turns = len(qa_history)
+
+        # ============================================================
+        # P0-2: overall_score 与 qa mean 一致性
+        # ============================================================
+        actual_mean = _compute_actual_mean(qa_history)
+        if actual_mean is None:
+            # 无有效轮分数 → fallback 到 input 的 average_score
+            actual_mean = float(average_score) if average_score else 0.0
+
+        llm_score = data.get("overall_score")
+        if llm_score is None:
+            data["overall_score"] = round(actual_mean, 1)
+        else:
+            try:
+                llm_score_f = float(llm_score)
+            except (TypeError, ValueError):
+                llm_score_f = actual_mean
+            if abs(llm_score_f - actual_mean) > _OVERALL_SCORE_TOLERANCE:
+                self.logger.warning(
+                    "P0-2 修正：LLM overall_score=%.2f 与 qa 实际 mean=%.2f 偏差 > %.1f，覆盖",
+                    llm_score_f, actual_mean, _OVERALL_SCORE_TOLERANCE,
+                )
+                data["overall_score"] = round(actual_mean, 1)
+                data["_overall_score_corrected"] = True
+            else:
+                data["overall_score"] = round(llm_score_f, 1)
+
         score = float(data["overall_score"])
 
-        # 2. grade 与 score 强一致（保留 v2 行为）
+        # ============================================================
+        # grade ↔ score 一致性（v2 行为保留）
+        # ============================================================
         expected_grade = self._score_to_grade(score)
         data["final_grade"] = expected_grade
         data["final_decision"] = self._decision_by_grade(expected_grade)
 
-        # 3. boundary_case 自动检测（覆盖 LLM 输出）
+        # ============================================================
+        # P0-3 + P0-4: decision_evidence 校验
+        # ============================================================
+        raw_evidence = data.get("decision_evidence", []) or []
+        invalid_turn_count = 0
+        invalid_snippet_count = 0
+        valid_evidence: List[Dict[str, Any]] = []
+        for ev in raw_evidence:
+            if not isinstance(ev, dict):
+                invalid_turn_count += 1
+                continue
+
+            # P0-3: turn_index 越界检查
+            ti = ev.get("turn_index")
+            if not isinstance(ti, int) or ti < 0 or (n_turns > 0 and ti >= n_turns):
+                invalid_turn_count += 1
+                continue
+
+            # P0-4: answer_snippet 必须出现在该轮的 answer 中
+            snippet = ev.get("answer_snippet") or ""
+            if n_turns > 0:
+                actual_answer = qa_history[ti].get("answer", "") or ""
+                if not validate_quote_in_answer(snippet, actual_answer):
+                    invalid_snippet_count += 1
+                    continue
+
+            valid_evidence.append(ev)
+
+        if invalid_turn_count + invalid_snippet_count > 0:
+            self.logger.warning(
+                "decision_evidence 过滤：%d 条 turn_index 越界，%d 条 answer_snippet 不在 answer 中",
+                invalid_turn_count, invalid_snippet_count,
+            )
+
+        # 过滤后 < 3 → 从 qa_history 自动补占位（保持 schema min_length=3 不破）
+        if len(valid_evidence) < 3 and n_turns > 0:
+            valid_evidence = self._pad_evidence_with_placeholders(valid_evidence, qa_history)
+
+        data["decision_evidence"] = valid_evidence
+
+        # ============================================================
+        # boundary_case + requires_human_review（基于校正后的 score）
+        # ============================================================
         boundary = _is_boundary_score(score)
         data["boundary_case"] = boundary
 
-        # 4. requires_human_review 强制规则
         avg_ag = _avg_agreement(qa_history)
         any_fb = _any_fallback(qa_history)
         any_low_conf = _any_low_confidence(qa_history)
@@ -318,7 +415,6 @@ class SummaryAgent(BaseAgent):
         if forced_review:
             data["requires_human_review"] = True
 
-        # 5. abstain_reason 自动填充（如果 review=True 且 LLM 没填）
         if data.get("requires_human_review") and not data.get("abstain_reason"):
             reasons = []
             if boundary:
@@ -329,9 +425,11 @@ class SummaryAgent(BaseAgent):
                 reasons.append(f"多模型平均一致性={avg_ag:.2f} < 0.6")
             if any_low_conf:
                 reasons.append("某轮 confidence_level=low")
+            if data.get("_overall_score_corrected"):
+                reasons.append("LLM 的 overall_score 与实际 mean 偏差较大已被覆盖")
             data["abstain_reason"] = "建议人工复核：" + "；".join(reasons)
 
-        # 6. decision_confidence 推导
+        # decision_confidence 推导
         if forced_review:
             data["decision_confidence"] = "low"
         elif avg_ag >= 0.8 and not boundary:
@@ -339,7 +437,87 @@ class SummaryAgent(BaseAgent):
         else:
             data["decision_confidence"] = data.get("decision_confidence", "medium")
 
+        # 清理内部临时标记
+        data.pop("_overall_score_corrected", None)
         return data
+
+    def _pad_evidence_with_placeholders(
+        self,
+        existing: List[Dict[str, Any]],
+        qa_history: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """过滤后 evidence < 3 时，从 qa_history 中分数最低的轮挑出来补占位。
+
+        占位 evidence 的特点：
+        - turn_index 合法（来自真实 qa_history）
+        - dimension/level/rubric_clause 来自该轮的实际 score_details.dimensions（v3）
+        - answer_snippet 用该轮 answer 的前 80 字符（保证 fuzzy match 必过）
+        - impact = neutral（占位，不主张方向）
+        """
+        used_turns = {ev["turn_index"] for ev in existing}
+        # 按分数升序（先补低分轮，更可能是问题点）
+        sorted_qa = sorted(
+            enumerate(qa_history),
+            key=lambda p: (p[1].get("score_details") or {}).get("score", 5),
+        )
+
+        result = list(existing)
+        for idx, qa in sorted_qa:
+            if len(result) >= 3:
+                break
+            if idx in used_turns:
+                continue
+
+            sd = qa.get("score_details") or {}
+            dims = sd.get("dimensions") or []
+            chosen_dim = dims[0] if dims and isinstance(dims[0], dict) else None
+
+            if chosen_dim:
+                dimension = chosen_dim.get("dimension", "math_logic")
+                level = chosen_dim.get("level", "MEDIUM")
+                rubric = chosen_dim.get("rubric_clause") or "(auto-filled placeholder)"
+            else:
+                dimension = "math_logic"
+                level = "MEDIUM"
+                rubric = "(auto-filled placeholder)"
+
+            answer_text = qa.get("answer") or ""
+            # 选 answer 的前 80 字作为 snippet（保证 fuzzy 校验过）
+            snippet = answer_text[:80] if answer_text else "(no answer)"
+
+            result.append({
+                "turn_index": idx,
+                "dimension": dimension,
+                "observed_level": level,
+                "rubric_clause": rubric,
+                "answer_snippet": snippet,
+                "impact": "neutral",
+            })
+            used_turns.add(idx)
+
+        # 极端情况：qa_history 全用过仍 < 3 → 重复使用 turn_index=0 占位
+        # （保证 schema min_length=3 不破，但前端会展示重复 turn）
+        while len(result) < 3:
+            if qa_history:
+                result.append({
+                    "turn_index": 0,
+                    "dimension": "math_logic",
+                    "observed_level": "MEDIUM",
+                    "rubric_clause": "(auto-filled placeholder)",
+                    "answer_snippet": (qa_history[0].get("answer") or "(no answer)")[:80],
+                    "impact": "neutral",
+                })
+            else:
+                # qa_history 空 — 这是 fallback 路径，保留原占位风格
+                result.append({
+                    "turn_index": 0,
+                    "dimension": "math_logic",
+                    "observed_level": "MEDIUM",
+                    "rubric_clause": "(no qa_history)",
+                    "answer_snippet": "(no answer)",
+                    "impact": "neutral",
+                })
+        return result
 
     def _score_to_grade(self, score: float) -> str:
         if score >= 8.5:
