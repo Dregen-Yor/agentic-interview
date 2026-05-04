@@ -10,6 +10,22 @@
         <span v-if="averageScore !== null" class="progress-score">
           当前平均 <strong>{{ averageScore.toFixed(1) }}</strong> / 10
         </span>
+        <!-- v3 单轮 confidence 信号 -->
+        <span
+          v-if="lastScoringConfidence"
+          class="progress-confidence"
+          :class="`conf-${lastScoringConfidence}`"
+          :title="confidenceTooltip"
+        >
+          单轮置信度 {{ confidenceText(lastScoringConfidence) }}
+        </span>
+        <span
+          v-if="lastRequiresReview"
+          class="progress-review-flag"
+          title="本轮多模型分歧明显或触发降级，建议人工复核"
+        >
+          ⚠ 复核
+        </span>
       </div>
       <div class="progress-track">
         <div class="progress-fill" :style="{ width: `${progressPercent}%` }"></div>
@@ -100,6 +116,7 @@ import { nanoid } from 'nanoid';
 import { buildWebSocketUrl } from '@/config';
 import MarkdownContent from '@/components/MarkdownContent.vue';
 import WriteEditor from '@/components/WriteEditor.vue';
+import type { Confidence } from '@/types/scoring';
 
 interface ChatMessage {
   id: string;
@@ -131,6 +148,23 @@ const averageScore = ref<number | null>(null);
 const progressPercent = computed(() =>
   Math.min(100, (progressCurrent.value / progressTotal.value) * 100)
 );
+
+// v3 confidence 信号（每轮 + 整场）
+const lastScoringConfidence = ref<Confidence | null>(null);
+const lastScoringAgreement = ref<number | null>(null);
+const lastRequiresReview = ref(false);
+const sessionHasReviewFlag = ref(false);  // 整场是否触发过复核标记
+
+const confidenceTooltip = computed(() => {
+  const parts: string[] = [];
+  if (lastScoringConfidence.value) {
+    parts.push(`置信度: ${confidenceText(lastScoringConfidence.value)}`);
+  }
+  if (typeof lastScoringAgreement.value === 'number') {
+    parts.push(`多模型一致性: ${(lastScoringAgreement.value * 100).toFixed(0)}%`);
+  }
+  return parts.join(' · ');
+});
 
 // Toast
 const toastVisible = ref(false);
@@ -240,6 +274,42 @@ function handleQuestionMessage(data: any) {
     progressCurrent.value = 1;
   }
 
+  // v3：单轮 confidence / agreement / requires_human_review 信号
+  if (typeof data.scoring_confidence === 'string') {
+    lastScoringConfidence.value = data.scoring_confidence as Confidence;
+  }
+  if (typeof data.scoring_agreement === 'number') {
+    lastScoringAgreement.value = data.scoring_agreement;
+  }
+  lastRequiresReview.value = Boolean(data.requires_human_review);
+  if (lastRequiresReview.value) {
+    sessionHasReviewFlag.value = true;
+    showToast(
+      '本轮评分置信度较低，建议关注后续表现以便招生老师复核',
+      'warning',
+      5000,
+    );
+  }
+
+  // 完成时（finalize_normal）— v3 boundary case / decision_confidence
+  if (data.status === 'completed') {
+    if (data.boundary_case) {
+      sessionHasReviewFlag.value = true;
+    }
+    if (data.requires_human_review || data.boundary_case) {
+      const reason = data.abstain_reason
+        ? `（${data.abstain_reason}）`
+        : data.boundary_case
+        ? '（分数处于等级边界）'
+        : '';
+      showToast(
+        `面试已完成，建议招生老师人工复核结果${reason}`,
+        'warning',
+        7000,
+      );
+    }
+  }
+
   const meta = data.question_type ? `题型: ${humanQuestionType(data.question_type)}` : undefined;
   pushMessage('interviewer', data.response || '', meta);
 }
@@ -272,6 +342,19 @@ function humanQuestionType(t: string): string {
     security_violation: '安全检测',
   };
   return map[t] || t;
+}
+
+function confidenceText(c: Confidence | null): string {
+  switch (c) {
+    case 'high':
+      return '高';
+    case 'medium':
+      return '中';
+    case 'low':
+      return '低';
+    default:
+      return '?';
+  }
 }
 
 // ---- 用户操作 ----
@@ -348,6 +431,43 @@ onUnmounted(() => {
 .progress-score strong {
   color: var(--color-primary);
   font-weight: var(--font-weight-semibold);
+}
+
+/* v3 confidence 标记 */
+.progress-confidence {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.progress-confidence.conf-high {
+  background-color: var(--color-success-bg, #f0f9eb);
+  color: var(--color-success);
+}
+
+.progress-confidence.conf-medium {
+  background-color: var(--color-primary-bg, #ecf5ff);
+  color: var(--color-primary);
+}
+
+.progress-confidence.conf-low {
+  background-color: var(--color-warning-bg, #fdf6ec);
+  color: var(--color-warning);
+}
+
+.progress-review-flag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  background-color: var(--color-warning-bg, #fdf6ec);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning);
 }
 
 .progress-track {

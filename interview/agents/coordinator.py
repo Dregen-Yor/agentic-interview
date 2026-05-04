@@ -21,6 +21,7 @@ from .graph import build_interview_graph, create_mongo_checkpointer
 from .memory import MemoryRetriever, MemoryStore
 from .qa_models import QATurn, get_question_type, get_score
 from .question_generator import QuestionGeneratorAgent
+from .question_verifier import QuestionVerifier
 from .resume_parser import ResumeParser
 from .scoring_agent import ScoringAgent
 from .security_agent import SecurityAgent
@@ -43,10 +44,28 @@ class MultiAgentCoordinator:
         self.question_generator = QuestionGeneratorAgent(
             models.get("question_model"), self.retrieval_system
         )
-        self.scoring_agent = ScoringAgent(models.get("scoring_model"))
+        # ScoringAgent v3：支持多模型 ensemble + RAG anchors（W2.1）
+        # 优先 scoring_models（List），向后兼容 scoring_model（single）
+        scoring_models = models.get("scoring_models")
+        if scoring_models is None:
+            single = models.get("scoring_model")
+            scoring_models = [single] if single is not None else []
+        if not scoring_models:
+            raise ValueError(
+                "MultiAgentCoordinator: 必须提供 scoring_models (List) 或 scoring_model (single)"
+            )
+        self.scoring_agent = ScoringAgent(scoring_models, memory_retriever=self.memory_retriever)
         self.security_agent = SecurityAgent(models.get("security_model"))
         self.summary_agent = SummaryAgent(models.get("summary_model"))
         self.resume_parser = ResumeParser(models.get("question_model"))
+        # W3.2 CoVe verifier：默认用 question_model（与出题模型一致，避免增加 API 来源）
+        # 若提供 verifier_model 则用专用模型；若显式禁用 (verifier_model=False) 则跳过
+        verifier_model = models.get("verifier_model", models.get("question_model"))
+        if verifier_model:
+            self.question_verifier = QuestionVerifier(verifier_model)
+        else:
+            self.question_verifier = None
+            self.logger.info("CoVe verifier 已禁用（verifier_model=None）")
 
         # 会话管理
         self.active_sessions: Dict[str, InterviewSession] = {}
@@ -80,6 +99,7 @@ class MultiAgentCoordinator:
             memory_retriever=self.memory_retriever,
             retrieval_system=self.retrieval_system,
             interview_session_provider=lambda sid: self.active_sessions.get(sid),
+            question_verifier=getattr(self, "question_verifier", None),  # W3.2 注入点
             checkpointer=self._checkpointer,
         )
         return self._graph

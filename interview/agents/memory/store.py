@@ -87,10 +87,13 @@ class MemoryStore:
         action: Dict[str, Any],
         reward: Dict[str, Any],
         security_check: Dict[str, Any] = None,
+        baseline_score: float = 5.0,
     ) -> bool:
         """
         保存一轮 Memento 三元组 (state, action, reward) 到 MongoDB，
         同时增量更新 session_meta 的统计信息。
+
+        W3.3：新增 baseline_score 参数（PER importance 计算用）。默认 5.0 兼容旧调用。
         """
         try:
             # 构建 combined_text 用于向量检索
@@ -102,14 +105,16 @@ class MemoryStore:
             # 生成 embedding
             embedding = self.rs.get_embedding(combined_text)
 
-            # 计算 importance
+            # 计算 importance（W3.3 改为 PER 风格）
             score = reward.get("score", 5)
             difficulty = action.get("question_data", {}).get("difficulty", "medium") if isinstance(action.get("question_data"), dict) else "medium"
             is_security_event = (
                 security_check is not None
                 and security_check.get("risk_level") in ("medium", "high")
             )
-            importance = self._compute_importance(score, difficulty, is_security_event)
+            importance = self._compute_importance(
+                score, difficulty, is_security_event, baseline_score=baseline_score
+            )
 
             # 构建 turn 文档
             now = datetime.now()
@@ -209,22 +214,39 @@ class MemoryStore:
 
     # -------------------- 私有方法 --------------------
 
-    def _compute_importance(self, score: int, difficulty: str, is_security_event: bool) -> float:
+    def _compute_importance(
+        self,
+        score: int,
+        difficulty: str,
+        is_security_event: bool,
+        baseline_score: float = 5.0,
+    ) -> float:
         """
-        Memento importance 计算:
-        importance = 0.5 * abs(score - 5.0) / 5.0
-                   + 0.3 * difficulty_weight
-                   + 0.2 * security_flag
-        """
-        difficulty_map = {"hard": 1.0, "medium": 0.6, "easy": 0.3}
-        diff_weight = difficulty_map.get(difficulty, 0.6)
-        sec_flag = 1.0 if is_security_event else 0.0
+        PER (Prioritized Experience Replay, Schaul 2015, arXiv:1511.05952) 风格 importance。
 
-        importance = (
-            0.5 * abs(score - 5.0) / 5.0
-            + 0.3 * diff_weight
-            + 0.2 * sec_flag
-        )
+        priority = (|TD-error| + ε) ** α
+          - TD-error 近似：|score - baseline_score|
+          - baseline_score：候选人当前历史均分（首轮默认 5.0）
+          - α=0.6（PER 论文 rank-based variant 推荐值）
+          - ε=0.01 避免 0 分时 importance=0
+
+        difficulty_bonus + security_bonus 作为 PER 公式之外的加性奖励项
+        （论文未涵盖，但与教育评估场景契合：难题/安全事件价值更高）。
+        """
+        EPSILON = 0.01
+        ALPHA = 0.6
+        # 归一化：5 是 score 与 baseline 最大可能距离（baseline∈[0,10]，score∈[0,10]）
+        # 实际取 max(score-baseline) ≈ 5 时的 priority 作为分母，让 base_priority 落在 [0, 1]
+        NORM_DIVISOR = (5.0 + EPSILON) ** ALPHA  # ≈ 2.626
+
+        td_error = abs(float(score) - float(baseline_score))
+        base_priority = ((td_error + EPSILON) ** ALPHA) / NORM_DIVISOR
+        base_priority = min(base_priority, 1.0)
+
+        difficulty_bonus = {"hard": 0.20, "medium": 0.10, "easy": 0.0}.get(difficulty, 0.10)
+        security_bonus = 0.30 if is_security_event else 0.0
+
+        importance = base_priority + difficulty_bonus + security_bonus
         return round(min(importance, 1.0), 4)
 
     def _build_combined_text(self, question: str, answer: str, reasoning: str) -> str:

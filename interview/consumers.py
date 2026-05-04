@@ -5,7 +5,7 @@ import base64
 import logging
 from channels.generic.websocket import AsyncWebsocketConsumer
 from .agents import MultiAgentCoordinator
-from .llm import chatgpt_model, gemini_model, kimi_model, qwen_model
+from .llm import chatgpt_model, gemini_model, kimi_model, qwen_model, doubao_model
 
 # 初始化logger
 logger = logging.getLogger("interview.consumers")
@@ -28,11 +28,15 @@ class InterviewConsumer(AsyncWebsocketConsumer):
         self._answer_lock = asyncio.Lock()
 
         # 初始化多智能体协调器
+        # W2.1：scoring_models 用 [doubao, gemini] 双模型 ensemble（不同 API 来源）
+        # - doubao 走豆包独立 API（thinking 已禁用）
+        # - gemini 走 GPT 通道代理
+        # 真正不同来源避免单点 rate limit；同时支持 CISC confidence-weighted 聚合
         models = {
             "question_model": chatgpt_model,
-            "scoring_model": chatgpt_model,
-            "security_model": gemini_model,  # 使用不同模型进行安全检测
-            "summary_model": gemini_model
+            "scoring_models": [doubao_model, gemini_model],
+            "security_model": gemini_model,
+            "summary_model": gemini_model,
         }
         self.coordinator = MultiAgentCoordinator(models)
 

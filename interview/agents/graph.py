@@ -1,19 +1,33 @@
 """
-LangGraph 状态机 (S6) — 替换原 coordinator 中的 if/else 编排
+LangGraph 状态机 v3 — 6 节点 pure-function 拓扑（W3.1 重构）
 
-核心改进：
-1. 显式声明状态图（process_answer 拓扑）
-2. security_check 与 score 通过 asyncio.gather 在 process_turn_node 内部并行
-3. MongoDB checkpointer 实现跨进程状态恢复（崩溃安全）
-4. 节点级条件路由替代散落的 if 分支
+论文锚点：
+- LangGraph Best Practices: 节点 pure function，返回 partial state update，避免 mutate
+- LLMs Cannot Self-Correct (ICLR 2024): 不要把所有逻辑塞一个节点，应该单职责拆分
+
+核心改动 vs v2：
+- 旧 process_turn_node 巨石节点 → 拆为 4 个节点
+- 仅 persist_node 和 next_question_node 允许 mutate InterviewSession
+  （这是 LangGraph 中 session 写入的唯一合法位置）
+- 每个节点的 partial state update 仅返回该节点产出，不修改其他字段
+- Memento PER importance（W3.3）由 persist_node 调用 save_turn 时传入 baseline_score
+- CoVe verifier 由 next_question_node 调用（W3.2 接入）
 
 拓扑：
-  START → process_turn_node ──┬─→ finalize_security  → END
-                              ├─→ finalize_normal    → END
-                              └─→ next_question_node → END (单轮回合)
+  START → security_node ──┬─→ finalize_security_node → END
+                          └─→ scoring_node → persist_node → readiness_node
+                                                                ├─→ finalize_normal_node → END
+                                                                └─→ retrieval_node → next_question_node → END
 
-每轮 process_answer 是一次完整的 graph.ainvoke，状态从 MongoDB 恢复并保存。
-首轮（start_interview）由独立的 start_node 处理。
+每个节点的契约：
+  security_node    : 输入 user_answer + current_question，输出 security_check + finalize_reason
+  scoring_node     : 输入 question/answer/session_id，输出 scoring_result（ScoringOutput dict）
+  persist_node     : 唯一允许 mutate session.qa_history + 写 MongoDB；输出 persisted=True
+  readiness_node   : 输入 session 状态，输出 is_ready + finalize_reason
+  retrieval_node   : 输入 question+answer，输出 similar_cases_context（Memento）
+  next_question_node: 调用 question_generator + (W3.2) CoVe verifier，mutate session.current_question
+  finalize_normal  : 生成总结 + 持久化结果，输出 final_summary
+  finalize_security: 安全终止专用 finalize
 """
 
 from __future__ import annotations
@@ -21,7 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Annotated, Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 from langgraph.checkpoint.mongodb import MongoDBSaver
 from langgraph.graph import END, START, StateGraph
@@ -41,27 +55,28 @@ logger = logging.getLogger("interview.agents.graph")
 class InterviewGraphState(TypedDict, total=False):
     """LangGraph 共享状态 — 单轮 process_answer 的完整上下文"""
 
+    # 输入
     session_id: str
     candidate_name: str
     resume_data: Dict[str, Any]
     parsed_profile: Optional[Dict[str, Any]]
     qa_history: List[Dict[str, Any]]
-
-    # 当前轮
     current_question: Optional[Dict[str, Any]]
     user_answer: str
 
-    # 节点产出
-    security_check: Optional[Dict[str, Any]]
-    score_details: Optional[Dict[str, Any]]
-    similar_cases_context: str
-    next_question: Optional[Dict[str, Any]]
+    # 节点产出（按拓扑顺序）
+    security_check: Optional[Dict[str, Any]]      # security_node
+    scoring_result: Optional[Dict[str, Any]]      # scoring_node — ScoringOutput dict (含 dimensions)
+    persisted: bool                                # persist_node
+    is_ready: bool                                 # readiness_node
+    similar_cases_context: str                     # retrieval_node
+    next_question: Optional[Dict[str, Any]]        # next_question_node
+    final_summary: Optional[Dict[str, Any]]        # finalize_*
 
     # 控制流
     should_block: bool
     interview_complete: bool
-    finalize_reason: str  # "security" | "normal" | "continue"
-    final_summary: Optional[Dict[str, Any]]
+    finalize_reason: str  # "security" | "normal" | "continue" | "error"
     average_score: float
     total_questions: int
 
@@ -83,19 +98,22 @@ def build_interview_graph(
     memory_retriever,
     retrieval_system,
     interview_session_provider,
+    question_verifier=None,        # W3.2 可选注入
     checkpointer=None,
 ):
     """
-    构造 process_answer 的状态图。
-    interview_session_provider: 给定 session_id 返回 InterviewSession（供 coordinator 共享内存态）
+    构造 process_answer 的状态图（6 节点拓扑）。
+
+    interview_session_provider: 给定 session_id 返回 InterviewSession（供 persist/next_q 节点 mutate）
+
+    persist_node 与 next_question_node 是仅有的两个允许 mutate session 的节点；
+    其他节点只读访问 session（用于读取 qa_history / parsed_profile 等）。
     """
 
-    # ---------------- 节点：处理一轮回合 ----------------
-    async def process_turn_node(state: InterviewGraphState) -> Dict[str, Any]:
-        """
-        核心并行节点：security_check 与 scoring 同时执行（asyncio.gather）。
-        内部完成：安全检测 + 评分 + 持久化 + readiness 判定。
-        """
+    # ============================================================
+    # 节点 1：security_node — 安全检测
+    # ============================================================
+    async def security_node(state: InterviewGraphState) -> Dict[str, Any]:
         session_id = state["session_id"]
         user_answer = state.get("user_answer", "")
         session = interview_session_provider(session_id)
@@ -108,9 +126,7 @@ def build_interview_graph(
             }
 
         current_question = session.current_question or {}
-
-        # 并行执行：security + scoring（最大瓶颈优化点）
-        security_task = security_agent.aprocess({
+        security_check = await security_agent.aprocess({
             "user_input": user_answer,
             "context": {
                 "session_id": session_id,
@@ -118,35 +134,27 @@ def build_interview_graph(
                 "current_question": current_question,
             },
         })
-        scoring_task = scoring_agent.aprocess({
-            "question": current_question.get("question", "") if current_question else "",
-            "answer": user_answer,
-            "question_type": get_question_type(current_question),
-            "difficulty": (current_question or {}).get("difficulty", "medium"),
-        })
-        security_check, scoring_result = await asyncio.gather(
-            security_task, scoring_task, return_exceptions=False
-        )
 
-        logger.debug(
-            "[graph] security risk=%s action=%s | score=%s",
-            security_check.get("risk_level"),
-            security_check.get("suggested_action"),
-            scoring_result.get("score"),
-        )
-
-        # 1. 安全短路 — block 时立即终止
         should_block = (
             security_check.get("suggested_action") == "block"
             or security_check.get("risk_level") == "high"
         )
+        logger.debug(
+            "[security_node] risk=%s action=%s block=%s",
+            security_check.get("risk_level"),
+            security_check.get("suggested_action"),
+            should_block,
+        )
+
         if should_block:
+            # 安全终止：mutate session（这是 security 路径的合法 mutation 点）
             malicious_turn = QATurn(
                 question=current_question.get("question", "") if current_question else "未知问题",
                 answer=user_answer,
                 question_type="security_violation",
                 difficulty="N/A",
-                question_data=session.question_data or {"question": "未知问题", "type": "security_violation"},
+                question_data=session.question_data
+                or {"question": "未知问题", "type": "security_violation"},
                 score_details={"score": 0, "reasoning": "因安全违规终止面试"},
                 security_check=security_check,
             )
@@ -154,13 +162,59 @@ def build_interview_graph(
             session.add_score(0)
             return {
                 "security_check": security_check,
-                "score_details": {"score": 0},
                 "should_block": True,
                 "interview_complete": True,
                 "finalize_reason": "security",
             }
 
-        # 2. 正常记录 + 持久化
+        return {
+            "security_check": security_check,
+            "should_block": False,
+            "finalize_reason": "continue",
+        }
+
+    # ============================================================
+    # 节点 2：scoring_node — MTS 多维度评分（W1 + W2 接入）
+    # ============================================================
+    async def scoring_node(state: InterviewGraphState) -> Dict[str, Any]:
+        session_id = state["session_id"]
+        session = interview_session_provider(session_id)
+        if not session:
+            return {"finalize_reason": "error", "output": {"success": False, "error": "Session not found"}}
+
+        current_question = session.current_question or {}
+        scoring_result = await scoring_agent.aprocess({
+            "question": current_question.get("question", "") if current_question else "",
+            "answer": state.get("user_answer", ""),
+            "question_type": get_question_type(current_question),
+            "difficulty": (current_question or {}).get("difficulty", "medium"),
+            "session_id": session_id,  # 用于 RAG anchors exclude_session_id（避免 self-leak）
+        })
+        logger.debug(
+            "[scoring_node] score=%s agreement=%s conf=%s review=%s",
+            scoring_result.get("score"),
+            scoring_result.get("agreement"),
+            scoring_result.get("confidence_level"),
+            scoring_result.get("requires_human_review"),
+        )
+        return {"scoring_result": scoring_result}
+
+    # ============================================================
+    # 节点 3：persist_node — 唯一允许 mutate session + 写 MongoDB
+    # ============================================================
+    async def persist_node(state: InterviewGraphState) -> Dict[str, Any]:
+        session_id = state["session_id"]
+        session = interview_session_provider(session_id)
+        if not session:
+            return {"persisted": False, "finalize_reason": "error",
+                    "output": {"success": False, "error": "Session not found"}}
+
+        scoring_result = state.get("scoring_result") or {}
+        security_check = state.get("security_check") or {}
+        current_question = session.current_question or {}
+        user_answer = state.get("user_answer", "")
+
+        # 1. 内存 session.qa_history 追加（合法 mutate 点）
         current_turn = QATurn(
             question=current_question.get("question", "") if current_question else "",
             answer=user_answer,
@@ -171,15 +225,17 @@ def build_interview_graph(
             score_details=scoring_result,
         )
         session.qa_history.append(current_turn.to_dict())
-        session.add_score(scoring_result["score"])
+        session.add_score(scoring_result.get("score", 0))
 
-        # 持久化 turn（同步 MongoDB 写）
+        # 2. 准备 turn 持久化的元数据
         turn_index = len(session.qa_history) - 1
         state_snapshot = {
             "turn_number": turn_index + 1,
             "cumulative_avg_score": session.get_average_score(),
             "previous_scores": session.score_list[:-1],
-            "question_types_so_far": [get_question_type(qa) for qa in session.qa_history[:-1]],
+            "question_types_so_far": [
+                get_question_type(qa) for qa in session.qa_history[:-1]
+            ],
         }
         action_data = {
             "question_text": current_turn.question,
@@ -188,89 +244,147 @@ def build_interview_graph(
             "security_check": security_check,
         }
 
+        # 3. PER importance（W3.3）：传入 baseline_score = 候选人当前历史均分
+        # 首次（无历史）默认 5.0；之后用 session.get_average_score()
+        baseline = session.get_average_score() if turn_index > 0 else 5.0
         await asyncio.to_thread(
             memory_store.save_turn,
             session_id, session.candidate_name, turn_index,
             state_snapshot, action_data, scoring_result, security_check,
+            baseline,
         )
-
-        # 3. 终止判定
-        total_questions = len(session.qa_history)
-        if total_questions >= 6:
-            return {
-                "security_check": security_check,
-                "score_details": scoring_result,
-                "should_block": False,
-                "interview_complete": True,
-                "finalize_reason": "normal",
-                "total_questions": total_questions,
-            }
-
-        readiness = scoring_agent.evaluate_interview_readiness(session.qa_history, min_questions=4)
-        if readiness["ready"]:
-            return {
-                "security_check": security_check,
-                "score_details": scoring_result,
-                "should_block": False,
-                "interview_complete": True,
-                "finalize_reason": "normal",
-                "total_questions": total_questions,
-            }
-
-        # 4. 触发 Memento 检索（在 thread 中跑同步检索 + embedding 生成）
-        retrieval_query = f"{current_turn.question} {user_answer}"
-        similar_cases = await asyncio.to_thread(
-            memory_retriever.retrieve_similar_cases,
-            retrieval_query, 4, session_id, None, 0.3,
+        logger.debug(
+            "[persist_node] turn=%d total=%d avg=%.2f baseline=%.2f",
+            turn_index + 1,
+            len(session.qa_history),
+            session.get_average_score(),
+            baseline,
         )
-        cases_context = memory_retriever.format_cases_for_question_generation(similar_cases)
+        return {"persisted": True, "total_questions": len(session.qa_history),
+                "average_score": session.get_average_score()}
 
+    # ============================================================
+    # 节点 4：readiness_node — 决定 finalize_normal vs continue
+    # ============================================================
+    async def readiness_node(state: InterviewGraphState) -> Dict[str, Any]:
+        session_id = state["session_id"]
+        session = interview_session_provider(session_id)
+        if not session:
+            return {"finalize_reason": "error",
+                    "output": {"success": False, "error": "Session not found"}}
+
+        total = len(session.qa_history)
+        # 强制终止：≥ 6 题
+        if total >= 6:
+            return {
+                "is_ready": True,
+                "finalize_reason": "normal",
+                "total_questions": total,
+            }
+        # 提前终止：readiness 判定
+        readiness = scoring_agent.evaluate_interview_readiness(
+            session.qa_history, min_questions=4
+        )
+        is_ready = readiness["ready"]
         return {
-            "security_check": security_check,
-            "score_details": scoring_result,
-            "similar_cases_context": cases_context,
-            "should_block": False,
-            "interview_complete": False,
-            "finalize_reason": "continue",
-            "total_questions": total_questions,
-            "average_score": session.get_average_score(),
+            "is_ready": is_ready,
+            "finalize_reason": "normal" if is_ready else "continue",
+            "total_questions": total,
         }
 
-    # ---------------- 节点：生成下一题 ----------------
+    # ============================================================
+    # 节点 5：retrieval_node — Memento 检索相似案例供下题
+    # ============================================================
+    async def retrieval_node(state: InterviewGraphState) -> Dict[str, Any]:
+        session_id = state["session_id"]
+        session = interview_session_provider(session_id)
+        if not session or not session.qa_history:
+            return {"similar_cases_context": ""}
+
+        last_qa = session.qa_history[-1]
+        retrieval_query = f"{last_qa.get('question', '')} {last_qa.get('answer', '')}"
+        try:
+            similar_cases = await asyncio.to_thread(
+                memory_retriever.retrieve_similar_cases,
+                retrieval_query, 4, session_id, None, 0.3,
+            )
+            cases_context = memory_retriever.format_cases_for_question_generation(similar_cases)
+        except Exception as e:
+            logger.warning(f"[retrieval_node] 检索失败（不阻塞下题）: {e}")
+            cases_context = ""
+        return {"similar_cases_context": cases_context}
+
+    # ============================================================
+    # 节点 6：next_question_node — 生成下一题（含 CoVe verifier W3.2）
+    # ============================================================
     async def next_question_node(state: InterviewGraphState) -> Dict[str, Any]:
         session_id = state["session_id"]
         session = interview_session_provider(session_id)
         if not session:
             return {"output": {"success": False, "error": "Session not found"}}
 
-        next_q = await question_generator.aprocess({
+        gen_input = {
             "interview_stage": "technical",
             "previous_qa": session.qa_history,
             "current_score": session.get_average_score(),
             "similar_cases_context": state.get("similar_cases_context", ""),
             "parsed_profile": session.parsed_profile,
-        })
+        }
+        next_q = await question_generator.aprocess(gen_input)
 
+        # CoVe verifier (W3.2)：可选，失败/未注入时直接放行
+        if question_verifier is not None:
+            try:
+                verification = await question_verifier.averify(
+                    candidate_question=next_q,
+                    parsed_profile=session.parsed_profile,
+                    qa_history=session.qa_history,
+                )
+                if not verification.is_valid:
+                    logger.info(
+                        "[next_question_node] CoVe 不通过，触发 revise: %s",
+                        verification.violations,
+                    )
+                    revise_input = {
+                        **gen_input,
+                        "verifier_feedback": verification.violations,
+                    }
+                    revised = await question_generator.aprocess(revise_input)
+                    next_q = revised
+            except Exception as e:
+                logger.warning(f"[next_question_node] CoVe verifier 异常（沿用原题）: {e}")
+
+        # mutate session（next_q 是合法 mutation 点）
         session.current_question = next_q
         session.question_data = next_q
 
         next_question_text = (
             next_q.get("question", str(next_q)) if isinstance(next_q, dict) else str(next_q)
         )
+        scoring_result = state.get("scoring_result") or {}
+        security_check = state.get("security_check") or {}
 
         output = {
             "success": True,
-            "score": state.get("score_details", {}).get("score", 0),
+            "score": scoring_result.get("score", 0),
             "question_data": next_q,
             "next_question": next_question_text,
-            "question_type": next_q.get("type", "technical") if isinstance(next_q, dict) else "technical",
+            "question_type": next_q.get("type", "technical")
+            if isinstance(next_q, dict)
+            else "technical",
             "current_average": session.get_average_score(),
             "total_questions": len(session.qa_history),
-            "security_warning": (state.get("security_check") or {}).get("risk_level") == "medium",
+            "security_warning": security_check.get("risk_level") == "medium",
+            # v3：暴露 confidence 信号给前端
+            "scoring_confidence": scoring_result.get("confidence_level", "medium"),
+            "scoring_agreement": scoring_result.get("agreement", 1.0),
+            "requires_human_review": scoring_result.get("requires_human_review", False),
         }
         return {"next_question": next_q, "output": output}
 
-    # ---------------- 节点：正常结束 ----------------
+    # ============================================================
+    # 节点 7：finalize_normal_node — 正常结束
+    # ============================================================
     async def finalize_normal_node(state: InterviewGraphState) -> Dict[str, Any]:
         session_id = state["session_id"]
         session = interview_session_provider(session_id)
@@ -335,18 +449,26 @@ def build_interview_graph(
             "total_questions": len(session.qa_history),
             "average_score": avg_score,
             "save_success": save_success,
+            # v3：决策置信度信号
+            "decision_confidence": summary_result.get("decision_confidence", "medium"),
+            "boundary_case": summary_result.get("boundary_case", False),
+            "requires_human_review": summary_result.get("requires_human_review", False),
+            "abstain_reason": summary_result.get("abstain_reason"),
+            "decision_evidence": summary_result.get("decision_evidence", []),
             "message": "面试已完成，感谢您的参与！",
         }
         return {"final_summary": summary_result, "output": output}
 
-    # ---------------- 节点：安全终止 ----------------
+    # ============================================================
+    # 节点 8：finalize_security_node — 安全终止
+    # ============================================================
     async def finalize_security_node(state: InterviewGraphState) -> Dict[str, Any]:
         session_id = state["session_id"]
         session = interview_session_provider(session_id)
         if not session:
             return {"output": {"success": False, "error": "Session not found"}}
 
-        security_check = state.get("security_check", {})
+        security_check = state.get("security_check", {}) or {}
         security_summary = security_agent.analyze_session_security(session.qa_history)
 
         summary_result = await summary_agent.aprocess({
@@ -365,7 +487,8 @@ def build_interview_graph(
                 "detected_issues": security_check.get("detected_issues", []),
                 "risk_level": security_check.get("risk_level", "high"),
                 "reasoning": security_check.get("reasoning", ""),
-                "malicious_input": session.qa_history[-1]["answer"] if session.qa_history else "未知输入",
+                "malicious_input": session.qa_history[-1]["answer"]
+                if session.qa_history else "未知输入",
             },
             "interview_summary": (
                 f"面试因安全违规而提前终止。候选人 {session.candidate_name} 在面试过程中尝试进行不当操作。"
@@ -442,32 +565,59 @@ def build_interview_graph(
         }
         return {"final_summary": final_summary, "output": output}
 
-    # ---------------- 路由函数 ----------------
-    def route_after_turn(state: InterviewGraphState) -> str:
-        reason = state.get("finalize_reason", "continue")
-        if reason == "security":
+    # ============================================================
+    # 路由函数
+    # ============================================================
+    def route_after_security(state: InterviewGraphState) -> str:
+        if state.get("finalize_reason") == "security":
             return "finalize_security"
+        if state.get("finalize_reason") == "error":
+            return END
+        return "scoring"
+
+    def route_after_readiness(state: InterviewGraphState) -> str:
+        reason = state.get("finalize_reason", "continue")
         if reason == "normal":
             return "finalize_normal"
-        return "next_question"
+        if reason == "error":
+            return END
+        return "retrieval"
 
-    # ---------------- 图构建 ----------------
+    # ============================================================
+    # 图构建
+    # ============================================================
     builder = StateGraph(InterviewGraphState)
-    builder.add_node("process_turn", process_turn_node)
+    builder.add_node("security", security_node)
+    builder.add_node("scoring", scoring_node)
+    builder.add_node("persist", persist_node)
+    builder.add_node("readiness", readiness_node)
+    builder.add_node("retrieval", retrieval_node)
     builder.add_node("next_question", next_question_node)
     builder.add_node("finalize_normal", finalize_normal_node)
     builder.add_node("finalize_security", finalize_security_node)
 
-    builder.add_edge(START, "process_turn")
+    builder.add_edge(START, "security")
     builder.add_conditional_edges(
-        "process_turn",
-        route_after_turn,
+        "security",
+        route_after_security,
         {
-            "next_question": "next_question",
-            "finalize_normal": "finalize_normal",
             "finalize_security": "finalize_security",
+            "scoring": "scoring",
+            END: END,
         },
     )
+    builder.add_edge("scoring", "persist")
+    builder.add_edge("persist", "readiness")
+    builder.add_conditional_edges(
+        "readiness",
+        route_after_readiness,
+        {
+            "finalize_normal": "finalize_normal",
+            "retrieval": "retrieval",
+            END: END,
+        },
+    )
+    builder.add_edge("retrieval", "next_question")
     builder.add_edge("next_question", END)
     builder.add_edge("finalize_normal", END)
     builder.add_edge("finalize_security", END)
@@ -479,7 +629,10 @@ def build_interview_graph(
 # Checkpointer 工厂
 # ============================================================
 
-def create_mongo_checkpointer(db_name: str = "interview", collection: str = "langgraph_checkpoints") -> MongoDBSaver:
+def create_mongo_checkpointer(
+    db_name: str = "interview",
+    collection: str = "langgraph_checkpoints_v3",  # v3 新 collection，老的弃用
+) -> MongoDBSaver:
     """构造基于现有 MongoDB 共享连接的 LangGraph checkpointer"""
     client: MongoClient = get_mongo_client()
     return MongoDBSaver(

@@ -82,6 +82,8 @@ class QuestionGeneratorAgent(BaseAgent):
         target_type = input_data.get("target_type")
         parsed_profile = input_data.get("parsed_profile")
         similar_cases = input_data.get("similar_cases_context")
+        # W3.2 CoVe revise：上一次生成的题目被 verifier 拒绝时的反馈
+        verifier_feedback = input_data.get("verifier_feedback")
 
         parts: List[str] = []
 
@@ -199,6 +201,22 @@ class QuestionGeneratorAgent(BaseAgent):
             parts.append(
                 "Strictly adhere to type limits and diversity rules: each type at most twice in the "
                 "entire process."
+            )
+
+        # W3.2 CoVe revise：把 verifier 反馈加到 prompt 末尾，强制本次出题修正
+        if verifier_feedback:
+            if isinstance(verifier_feedback, list):
+                feedback_text = "; ".join(str(v) for v in verifier_feedback)
+            else:
+                feedback_text = str(verifier_feedback)
+            parts.append(
+                "=== REVISION REQUIRED (CoVe verifier feedback from previous attempt) ===\n"
+                f"The previous candidate question failed the following checks:\n{feedback_text}\n"
+                "You MUST address all of these issues in this new attempt:\n"
+                "- If type quota was exceeded, switch to a different question type.\n"
+                "- If resume_anchor failed, explicitly cite a parsed_profile item id in reasoning.\n"
+                "- If no_repeat failed, change the knowledge point being tested.\n"
+                "- If difficulty_match failed, adjust difficulty up or down accordingly."
             )
 
         return "\n\n".join(parts) if parts else "Please generate the next interview question."
