@@ -13,7 +13,7 @@
 | `MultiAgentCoordinator` | `coordinator.py` | 编排整个面试流水线，持有所有数据持久化逻辑 |
 | `ResumeParser` | `resume_parser.py` | 面试开始时一次性解析简历 → `structured_profile` |
 | `SecurityAgent` | `security_agent.py` | 双层安全检测（正则 + LLM），三级风险 |
-| `ScoringAgent` | `scoring_agent.py` | 5 维度评分，总分 10 分 |
+| `ScoringAgent` | `scoring_agent.py` | 单题整体评分 0-10，多模型 CISC 加权 |
 | `QuestionGeneratorAgent` | `question_generator.py` | 生成下一题，锚定简历，可调用 RAG 工具 |
 | `SummaryAgent` | `summary_agent.py` | 生成最终报告，数据由协调器统一保存 |
 | `BaseAgent` | `base_agent.py` | 抽象基类，定义 `get_system_prompt()` / `process()` 接口 |
@@ -336,17 +336,17 @@ coordinator.process_answer()
   → [继续] MemoryRetriever.retrieve_similar_cases() + QuestionGeneratorAgent.process()
 ```
 
-## 评分维度
+## 评分体系（v4）
 
-| 维度 | 满分 |
-|------|------|
-| math_logic | 4 |
-| reasoning_rigor | 2 |
-| communication | 2 |
-| collaboration | 1 |
-| growth_potential | 1 |
+ScoringAgent 让 LLM 直接给单题 0-10 总分（不再按 5 维度独立打分）。等级阈值（基于 qa_history 平均分）：
 
-等级：A≥8.5 / B≥7.0 / C≥5.0 / D<5.0
+- A ≥ 8.5
+- B ≥ 7.0
+- C ≥ 5.0
+- D < 5.0
+
+软兜底：候选人答对题目时，prompt 要求 LLM 给至少 8 分。9-10 分对应「答对 + 洞察 / 边界条件意识 / 优雅表达」。
+0 分硬契约：仅讨论 / 无结论 → 直接给 0，evidence_quote = "(no valid solution)"。
 
 ## 相关文件
 
@@ -365,6 +365,7 @@ coordinator.process_answer()
 
 | 日期 | 变更 |
 |------|------|
+| 2026-05-07 | **W4 单分制重构（v4，破坏性）**：删除 `DimensionScore` / `DIMENSION_MAX_SCORE` / `_DIM_KEYS` / `_score_one` / `_aggregate_ensemble` / `_compute_agreement` / `_fallback_dim` / `DetailedAnalysis`；新增 `SingleScoreCandidate` schema + `_score_with_model` / `_aggregate_scores` / `_compute_score_agreement` / `_fallback_score`；ScoringAgent 改为单题整体评分；`SummaryOutput.detailed_analysis` → `overall_analysis`；`DecisionEvidence` 字段重写（dimension/observed_level/rubric_clause → question_focus/rationale）；新 `prompts/scoring_holistic.yaml`，删除 `scoring_dimension.yaml` + `scoring_agent.yaml`；测试 151 → 143 |
 | 2026-04-29 | P0 契约修复：`ScoringAgent` 0 分契约恢复（`max(1,...)` → `max(0,...)` + int 类型守卫）；`_fix_common_json_issues` 5 处重复实现统一收敛到 `base_agent.fix_common_json_issues` 模块函数 + `BaseAgent` 实例方法；其余 4 个 agent（question_generator / scoring / security / summary）通过继承自动获得，`resume_parser`（非 BaseAgent 子类）保留 wrapper 委托给模块函数 |
 | 2026-04-27 | 修复 P0：scoring 字段路径、question_generator 题型一致性、summary datetime 冲突、security 过激/KeyError；新增 `qa_models.py` 统一 Q&A 结构；coordinator 切到 QATurn |
 | 2026-04-24T15:33:52.266Z | 补充各 agent 详细接口、输入输出、coordinator 流水线、终止条件 |

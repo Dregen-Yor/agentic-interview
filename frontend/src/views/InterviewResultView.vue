@@ -18,7 +18,7 @@
     <!-- 数据 -->
     <div v-else-if="interviewResult" class="result-content">
 
-      <!-- 人工复核横幅（v3，最优先展示） -->
+      <!-- 人工复核横幅 -->
       <section
         v-if="requiresHumanReview"
         class="review-banner"
@@ -74,56 +74,77 @@
         </div>
       </section>
 
-      <!-- 五维度 + 雷达图 -->
-      <section v-if="dimensions.length" class="dimensions-card app-card">
-        <h2 class="card-title">
-          五维度能力
-          <span v-if="hasV3Dimensions" class="card-title-tag">含证据片段</span>
-        </h2>
-        <div class="dimensions-body">
-          <div class="dimensions-radar">
-            <RadarChart :axes="radarAxes" :size="320" />
-          </div>
-          <ul class="dimensions-list">
-            <li v-for="dim in dimensions" :key="dim.dimension" class="dimensions-item">
-              <div class="dim-header">
-                <span class="dim-label">{{ dimensionLabel(dim.dimension) }}</span>
-                <span class="dim-badges">
-                  <span class="app-tag dim-level-tag" :class="`level-${dim.level}`">
-                    {{ dim.level }}
-                  </span>
-                  <span class="dim-score">{{ dim.score }} / {{ dimMax(dim.dimension) }}</span>
-                </span>
-              </div>
-              <div class="dim-bar-track">
-                <div
-                  class="dim-bar-fill"
-                  :class="`fill-${dim.level}`"
-                  :style="{ width: `${(dim.score / dimMax(dim.dimension)) * 100}%` }"
-                ></div>
-              </div>
-              <!-- v3 evidence -->
-              <div v-if="dim.evidence_quote && !isLegacyQuote(dim.evidence_quote)" class="dim-evidence">
-                <span class="dim-evidence-label">证据片段：</span>
-                <span class="dim-evidence-quote">"{{ dim.evidence_quote }}"</span>
-                <span v-if="dim.confidence" class="dim-evidence-conf">
-                  · 单维置信度 {{ getConfidenceText(dim.confidence) }}
-                </span>
-              </div>
-            </li>
-          </ul>
-        </div>
+      <!-- 整体分析 -->
+      <section v-if="interviewResult.overall_analysis" class="analysis-card app-card">
+        <h2 class="card-title">整体分析</h2>
+        <p class="analysis-text">{{ interviewResult.overall_analysis }}</p>
       </section>
 
-      <!-- 决策证据（v3 RULERS） -->
+      <!-- Q&A 列表（v4 替代雷达图） -->
+      <section v-if="qaList.length" class="qa-card app-card">
+        <h2 class="card-title">
+          逐题评分
+          <span class="card-title-tag">{{ qaList.length }} 题</span>
+        </h2>
+        <ul class="qa-list">
+          <li v-for="(qa, i) in qaList" :key="`qa-${i}`" class="qa-item">
+            <div class="qa-head">
+              <span class="qa-no">第 {{ i + 1 }} 题</span>
+              <span v-if="qa.question_type" class="app-tag qa-type-tag">
+                {{ qa.question_type }}
+              </span>
+              <span v-if="qa.question_focus" class="app-tag qa-focus-tag">
+                考察方向：{{ qa.question_focus }}
+              </span>
+              <span v-if="qa.confidence" class="qa-conf">
+                单轮置信度 {{ getConfidenceText(qa.confidence) }}
+              </span>
+            </div>
+
+            <div class="qa-body">
+              <div class="qa-text-block">
+                <div class="qa-text-row qa-text-row--question">
+                  <div class="qa-text-label">题目</div>
+                  <MarkdownContent class="qa-text-content" :source="qa.question || ''" />
+                </div>
+                <div class="qa-text-row qa-text-row--answer">
+                  <div class="qa-text-label">回答</div>
+                  <MarkdownContent class="qa-text-content" :source="qa.answer || '（无回答）'" />
+                </div>
+                <div v-if="qa.evidence_quote" class="qa-evidence">
+                  <span class="qa-evidence-label">证据片段：</span>
+                  <span class="qa-evidence-quote">"{{ qa.evidence_quote }}"</span>
+                </div>
+                <div v-if="qa.reasoning" class="qa-reasoning">
+                  <span class="qa-evidence-label">评分理由：</span>
+                  <span>{{ qa.reasoning }}</span>
+                </div>
+              </div>
+
+              <div class="qa-score-block">
+                <ScoreRing
+                  :score="qa.score"
+                  :max="10"
+                  :size="64"
+                  :color="qaScoreColor(qa.score)"
+                />
+                <span v-if="qa.requires_human_review" class="qa-review-tag">
+                  ⚠ 复核
+                </span>
+              </div>
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <!-- 决策证据（v4 RULERS） -->
       <section v-if="decisionEvidence.length" class="evidence-card app-card">
         <h2 class="card-title">
           决策证据
-          <span class="card-title-tag">RULERS · 证据链可审计</span>
+          <span class="card-title-tag">证据链可审计</span>
         </h2>
         <p class="evidence-desc">
-          以下证据来自具体面试轮次，每条均引用 rubric 描述与候选人答案中的关键片段，
-          支撑最终决策的可追溯性。
+          以下证据来自具体面试轮次，每条均引用题目考察方向、答案关键片段以及一句话决策依据。
         </p>
         <ul class="evidence-list">
           <li
@@ -134,15 +155,15 @@
           >
             <div class="evidence-head">
               <span class="evidence-turn">第 {{ ev.turn_index + 1 }} 题</span>
-              <span class="app-tag dim-level-tag" :class="`level-${ev.observed_level}`">
-                {{ dimensionLabel(ev.dimension) }} · {{ ev.observed_level }}
+              <span class="app-tag qa-focus-tag">
+                {{ ev.question_focus || '未知考察方向' }}
               </span>
               <span class="evidence-impact" :class="`impact-tag-${ev.impact}`">
                 {{ getImpactText(ev.impact) }}
               </span>
             </div>
-            <div class="evidence-rubric">
-              <span class="evidence-meta-label">rubric：</span>{{ ev.rubric_clause }}
+            <div class="evidence-rationale">
+              <span class="evidence-meta-label">决策依据：</span>{{ ev.rationale }}
             </div>
             <div class="evidence-snippet">
               <span class="evidence-meta-label">候选人答：</span>"{{ ev.answer_snippet }}"
@@ -151,54 +172,35 @@
         </ul>
       </section>
 
-      <!-- 详细分析 + 优势/不足 -->
+      <!-- 优势 + 不足 -->
       <div class="analysis-grid">
-        <section
-          v-if="interviewResult.detailed_analysis"
-          class="analysis-card app-card"
-        >
-          <h2 class="card-title">详细分析</h2>
-          <div class="analysis-list">
-            <div
-              v-for="(value, key) in interviewResult.detailed_analysis"
-              :key="key"
-              class="analysis-item"
+        <section class="strength-card app-card">
+          <h2 class="card-title card-title--success">优势</h2>
+          <div v-if="hasItems(interviewResult.strengths)" class="tag-list">
+            <span
+              v-for="(s, i) in interviewResult.strengths"
+              :key="`s-${i}`"
+              class="app-tag app-tag--success"
             >
-              <div class="analysis-item-title">{{ getAnalysisTitle(key) }}</div>
-              <div class="analysis-item-content">{{ value }}</div>
-            </div>
+              {{ s }}
+            </span>
           </div>
+          <p v-else class="no-data">暂无数据</p>
         </section>
 
-        <aside class="aside-stack">
-          <section class="strength-card app-card">
-            <h2 class="card-title card-title--success">优势</h2>
-            <div v-if="hasItems(interviewResult.strengths)" class="tag-list">
-              <span
-                v-for="(s, i) in interviewResult.strengths"
-                :key="`s-${i}`"
-                class="app-tag app-tag--success"
-              >
-                {{ s }}
-              </span>
-            </div>
-            <p v-else class="no-data">暂无数据</p>
-          </section>
-
-          <section class="weakness-card app-card">
-            <h2 class="card-title card-title--warning">待改进</h2>
-            <div v-if="hasItems(interviewResult.weaknesses)" class="tag-list">
-              <span
-                v-for="(w, i) in interviewResult.weaknesses"
-                :key="`w-${i}`"
-                class="app-tag app-tag--warning"
-              >
-                {{ w }}
-              </span>
-            </div>
-            <p v-else class="no-data">暂无数据</p>
-          </section>
-        </aside>
+        <section class="weakness-card app-card">
+          <h2 class="card-title card-title--warning">待改进</h2>
+          <div v-if="hasItems(interviewResult.weaknesses)" class="tag-list">
+            <span
+              v-for="(w, i) in interviewResult.weaknesses"
+              :key="`w-${i}`"
+              class="app-tag app-tag--warning"
+            >
+              {{ w }}
+            </span>
+          </div>
+          <p v-else class="no-data">暂无数据</p>
+        </section>
       </div>
 
       <!-- 推荐 -->
@@ -239,18 +241,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useAuth } from '@/stores/auth';
-import RadarChart from '@/components/RadarChart.vue';
 import ScoreRing from '@/components/ScoreRing.vue';
+import MarkdownContent from '@/components/MarkdownContent.vue';
 import {
   type InterviewResult,
-  type DimensionScore,
-  type DimensionKey,
   type DecisionEvidence,
   type Confidence,
   type EvidenceImpact,
-  DIMENSION_MAX_SCORE,
-  DIMENSION_LABELS,
-  extractDimensionsForRadar,
 } from '@/types/scoring';
 
 const authStore = useAuth();
@@ -258,33 +255,45 @@ const interviewResult = ref<InterviewResult | null>(null);
 const isLoading = ref(true);
 const error = ref<string | null>(null);
 
-// ---------------- 维度数据（v3 优先，v2 兼容） ----------------
-const dimensions = computed<DimensionScore[]>(() => {
-  return extractDimensionsForRadar(interviewResult.value);
+// ---------------- Q&A 列表（v4 单分制） ----------------
+interface QaListItem {
+  question: string;
+  answer: string;
+  question_type: string;
+  score: number;
+  question_focus: string;
+  evidence_quote: string;
+  reasoning: string;
+  confidence: Confidence | null;
+  requires_human_review: boolean;
+}
+
+const qaList = computed<QaListItem[]>(() => {
+  const r = interviewResult.value;
+  if (!r || !Array.isArray(r.qa_history)) return [];
+  return r.qa_history.map((qa: any) => {
+    const sd = qa.score_details || {};
+    return {
+      question: qa.question || '',
+      answer: qa.answer || '',
+      question_type: qa.question_type || sd.question_type || '',
+      score: numericValue(sd.score),
+      question_focus: sd.question_focus || '',
+      evidence_quote: sd.evidence_quote || '',
+      reasoning: sd.reasoning || '',
+      confidence: (sd.confidence_level as Confidence) || null,
+      requires_human_review: Boolean(sd.requires_human_review),
+    };
+  });
 });
 
-const radarAxes = computed(() =>
-  dimensions.value.map((d) => ({
-    label: dimensionLabel(d.dimension),
-    value: d.score,
-    max: DIMENSION_MAX_SCORE[d.dimension] || 1,
-  })),
-);
-
-// 检测是否有 v3 真实证据片段（不是 legacy fallback）
-const hasV3Dimensions = computed(() =>
-  dimensions.value.some(
-    (d) => d.evidence_quote && !isLegacyQuote(d.evidence_quote),
-  ),
-);
-
-// ---------------- 决策证据（v3） ----------------
+// ---------------- 决策证据 ----------------
 const decisionEvidence = computed<DecisionEvidence[]>(() => {
   const arr = interviewResult.value?.decision_evidence;
   return Array.isArray(arr) ? arr : [];
 });
 
-// ---------------- v3 独有：boundary case / human review ----------------
+// ---------------- v4 信号 ----------------
 const isBoundaryCase = computed(() => Boolean(interviewResult.value?.boundary_case));
 
 const requiresHumanReview = computed(() =>
@@ -293,7 +302,6 @@ const requiresHumanReview = computed(() =>
 
 const abstainReason = computed(() => interviewResult.value?.abstain_reason || '');
 
-// 决策置信度：v3 优先 decision_confidence，回退到 v2 confidence_level
 const decisionConfidence = computed<Confidence | null>(() => {
   const r = interviewResult.value;
   if (!r) return null;
@@ -347,17 +355,10 @@ function hasItems(arr: any): boolean {
   return Array.isArray(arr) && arr.length > 0;
 }
 
-function dimensionLabel(key: DimensionKey): string {
-  return DIMENSION_LABELS[key] || key;
-}
-
-function dimMax(key: DimensionKey): number {
-  return DIMENSION_MAX_SCORE[key] || 1;
-}
-
-function isLegacyQuote(quote: string): boolean {
-  // legacy fallback / fallback 占位的 quote 不显示
-  return /^\(legacy|fallback|no valid solution|no quote/i.test(quote || '');
+function qaScoreColor(score: number): string {
+  if (score >= 8) return 'var(--color-success)';
+  if (score >= 5) return 'var(--color-warning)';
+  return 'var(--color-danger)';
 }
 
 function getDecisionText(decision?: string) {
@@ -398,20 +399,6 @@ function getImpactText(impact: EvidenceImpact) {
   }
 }
 
-function getAnalysisTitle(key: string | number) {
-  const map: Record<string, string> = {
-    math_logic: '数理与逻辑',
-    reasoning_rigor: '推理严谨性',
-    communication: '沟通能力',
-    collaboration: '合作与社交',
-    growth_potential: '发展潜力',
-    technical_skills: '技术能力',
-    experience_match: '经验匹配度',
-    problem_solving: '问题解决能力',
-  };
-  return map[String(key)] || String(key);
-}
-
 function formatTimestamp(timestamp: any) {
   if (!timestamp) return '未知时间';
   try {
@@ -448,7 +435,6 @@ onMounted(async () => {
           created_at: data.result.timestamp || data.result.created_at,
           candidate_name:
             ds.candidate_name || data.result.candidate_name || data.result.name,
-          // 关键：把 qa_history 也带上，让 extractDimensionsForRadar 能从中读 v3 dimensions
           qa_history: data.result.qa_history || ds.qa_history,
         };
       } else {
@@ -526,7 +512,7 @@ onMounted(async () => {
   gap: var(--space-6);
 }
 
-/* ---- 人工复核横幅（v3） ---- */
+/* 人工复核横幅 */
 .review-banner {
   display: flex;
   gap: var(--space-4);
@@ -626,7 +612,7 @@ onMounted(async () => {
   color: var(--color-text-placeholder);
 }
 
-/* 维度卡 */
+/* 卡片标题 */
 .card-title {
   margin: 0 0 var(--space-5);
   font-size: var(--font-size-lg);
@@ -654,119 +640,138 @@ onMounted(async () => {
   color: var(--color-warning);
 }
 
-.dimensions-body {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--space-8);
-  align-items: center;
+/* 整体分析 */
+.analysis-text {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.8;
+  color: var(--color-text-regular);
+  white-space: pre-wrap;
 }
 
-.dimensions-list {
+/* Q&A 列表 */
+.qa-list {
   list-style: none;
   margin: 0;
   padding: 0;
-}
-
-.dimensions-item {
-  margin-bottom: var(--space-5);
-}
-
-.dim-header {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.qa-item {
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  background-color: var(--color-bg-page, #f5f7fa);
+}
+
+.qa-head {
+  display: flex;
   align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.qa-no {
   font-size: var(--font-size-sm);
-  margin-bottom: 6px;
-  gap: var(--space-2);
-}
-
-.dim-label {
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
-  font-weight: var(--font-weight-medium);
 }
 
-.dim-badges {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.dim-score {
-  color: var(--color-text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-.dim-level-tag {
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.5px;
+.qa-type-tag {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary);
   font-size: var(--font-size-xs);
 }
 
-.dim-level-tag.level-LOW {
-  background-color: var(--color-danger-bg, #fef0f0);
-  color: var(--color-danger, #f56c6c);
+.qa-focus-tag {
+  background-color: var(--color-bg-card);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  border: 1px solid var(--color-border);
 }
 
-.dim-level-tag.level-MEDIUM {
-  background-color: var(--color-warning-bg, #fdf6ec);
-  color: var(--color-warning, #e6a23c);
+.qa-conf {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-placeholder);
 }
 
-.dim-level-tag.level-HIGH {
-  background-color: var(--color-success-bg, #f0f9eb);
-  color: var(--color-success, #67c23a);
+.qa-body {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-4);
+  align-items: flex-start;
 }
 
-.dim-bar-track {
-  height: 6px;
-  background-color: var(--color-border-light);
-  border-radius: var(--radius-full);
-  overflow: hidden;
+.qa-text-block {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
-.dim-bar-fill {
-  height: 100%;
-  border-radius: var(--radius-full);
-  transition: width 0.4s ease;
+.qa-text-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.dim-bar-fill.fill-LOW {
-  background: linear-gradient(90deg, var(--color-danger) 0%, #f8a3a3 100%);
-}
-.dim-bar-fill.fill-MEDIUM {
-  background: linear-gradient(90deg, var(--color-warning) 0%, #f3c97e 100%);
-}
-.dim-bar-fill.fill-HIGH {
-  background: linear-gradient(90deg, var(--color-success) 0%, #a8d977 100%);
+.qa-text-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
 }
 
-.dim-evidence {
-  margin-top: var(--space-2);
+.qa-text-content {
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+  color: var(--color-text-regular);
+}
+
+.qa-text-row--question .qa-text-content {
+  color: var(--color-text-primary);
+}
+
+.qa-evidence,
+.qa-reasoning {
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--color-text-regular);
   padding: var(--space-2) var(--space-3);
-  background-color: var(--color-primary-bg, #ecf5ff);
+  background-color: var(--color-bg-card);
   border-left: 2px solid var(--color-primary);
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-regular);
-  line-height: 1.5;
 }
 
-.dim-evidence-label {
+.qa-evidence-label {
   color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
   margin-right: 4px;
 }
 
-.dim-evidence-quote {
+.qa-evidence-quote {
   color: var(--color-text-primary);
   font-style: italic;
 }
 
-.dim-evidence-conf {
-  color: var(--color-text-placeholder);
-  margin-left: 4px;
+.qa-score-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
 
-/* 决策证据卡（v3） */
+.qa-review-tag {
+  font-size: var(--font-size-xs);
+  color: var(--color-warning);
+  white-space: nowrap;
+}
+
+/* 决策证据卡 */
 .evidence-card {
   border-left: 3px solid var(--color-primary);
 }
@@ -839,7 +844,7 @@ onMounted(async () => {
   color: var(--color-text-secondary);
 }
 
-.evidence-rubric,
+.evidence-rationale,
 .evidence-snippet {
   font-size: var(--font-size-xs);
   line-height: 1.6;
@@ -853,44 +858,10 @@ onMounted(async () => {
   margin-right: 4px;
 }
 
-/* 分析 + 优劣 */
+/* 优劣 */
 .analysis-grid {
   display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: var(--space-6);
-}
-
-.analysis-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.analysis-item {
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--color-border-light);
-}
-
-.analysis-item:last-child {
-  border-bottom: none;
-}
-
-.analysis-item-title {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-  margin-bottom: var(--space-2);
-}
-
-.analysis-item-content {
-  font-size: var(--font-size-sm);
-  line-height: 1.7;
-  color: var(--color-text-regular);
-}
-
-.aside-stack {
-  display: flex;
-  flex-direction: column;
+  grid-template-columns: 1fr 1fr;
   gap: var(--space-6);
 }
 
@@ -943,12 +914,12 @@ onMounted(async () => {
   .overview-tagline {
     justify-content: center;
   }
-  .dimensions-body {
+  .qa-body {
     grid-template-columns: 1fr;
   }
-  .dimensions-radar {
-    display: flex;
-    justify-content: center;
+  .qa-score-block {
+    flex-direction: row;
+    justify-content: flex-start;
   }
   .analysis-grid {
     grid-template-columns: 1fr;

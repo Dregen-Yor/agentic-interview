@@ -4,6 +4,7 @@
 
 | 日期 | 变更 |
 |------|------|
+| 2026-05-07 | **W4 单题整体评分重构（v4，破坏性）**：(1) 删除 5 维度独立打分（`DimensionScore` / `DIMENSION_MAX_SCORE` / `DetailedAnalysis`）；(2) `ScoringOutput` 改为单一 0-10 总分 + `evidence_quote` + `question_focus`；(3) `DecisionEvidence` 字段重写：`dimension/observed_level/rubric_clause` → `question_focus/rationale`；(4) `SummaryOutput.detailed_analysis` 删除，改为 `overall_analysis: str`；(5) 新 prompt `scoring_holistic.yaml` 恢复 v2 软兜底「答对至少 8 分」；(6) ScoringAgent 重写为 N 模型并行 + CISC 加权聚合（5N → N 次 LLM 调用）；(7) agreement 公式改为 `1 - (max - min) / 10`；(8) LangGraph checkpoint 升级 `langgraph_checkpoints_v3` → `v4`；(9) 前端删除雷达图、维度证据卡、`detailed_analysis` 段，新增 Q&A 列表展示（题目 + 考察方向 + 答案 + 单题分数环 + evidence 引用）；(10) `RadarChart.vue` 删除；(11) 测试调整：143 通过（旧 151，5 维度强制覆盖相关用例报废，新增单分制 + ensemble disagreement 用例） |
 | 2026-05-04 | **W1-W3 论文驱动重构（v3）+ AES 实验模块**：(1) 集成 5 篇论文（MTS / RULERS / CISC / CoVe / PER + BAS）；(2) Schemas v3 强制内部一致性 + evidence 三元组；(3) ScoringAgent 改 5 维度独立 + 双模型 ensemble (`[doubao, gemini]`) + RAG anchors；(4) SummaryAgent 加 `decision_evidence` / `boundary_case` / `requires_human_review`；(5) graph.py 6 节点 pure-function 拓扑；(6) **新增 QuestionVerifier**（CoVe factor+revise）；(7) PER importance 替换手工 0.5/0.3/0.2；(8) 修复 4 个 P0 内部一致性漏洞（rubric_clause 强制覆盖 / overall_score = mean / decision_evidence turn_index 上界 / answer_snippet fuzzy 校验）；(9) **新增 `interview/aes/` 实验模块**（不影响面试逻辑，EMNLP 2026 双层叙事 ASAP 2.0 instantiation）；(10) **前端 v3 同步**：新增 `types/scoring.ts`，`InterviewResultView` 加决策证据卡 + 复核横幅；(11) 单测 0 → 151；(12) 新增 4 份文档（explainability_paper / emnlp2026_strategy / emnlp2026_paper_skeleton + 本 changelog）|
 | 2026-04-30 | 前端 Markdown + KaTeX 集成（marked + DOMPurify + katex）：新增 `utils/markdown.ts` / `MarkdownContent.vue` / `WriteEditor.vue`；FaceToFaceTestView 气泡走 markdown 渲染、输入区改为「写/预览」双 tab；新增 `.env.example` 模板 |
 | 2026-04-29 | 修复 P0 安全/契约 bug：SECRET_KEY 改环境变量、ScoringAgent 0 分契约恢复、抽取 `_fix_common_json_issues` 到 BaseAgent、WebSocket 后台任务异常处理与并发锁、前端处理 4 种消息类型 |
@@ -371,7 +372,7 @@ WebSocket 端点：`ws://<host>:8000/ws/interview/<chat_id>/`
 
 用户回答
   → SecurityAgent       (正则快检 + LLM 深度分析 → continue/warning/block)
-  → ScoringAgent        (5 维度评分，就绪检查)
+  → ScoringAgent        (单题整体 0-10 评分 + 双模型 CISC ensemble，就绪检查)
   → Memory 更新         (记录 Q&A、分数、上下文)
   → QuestionGeneratorAgent  (下一题，锚定简历，可调用 RAG 工具)
   → [第 5-6 轮后] SummaryAgent  (最终报告 + 录用建议)

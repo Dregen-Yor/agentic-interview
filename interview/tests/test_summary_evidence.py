@@ -1,13 +1,13 @@
 """
-W1 单测：SummaryAgent v3 — RULERS evidence triple + BAS boundary case
+v4 单测：SummaryAgent — 单分制 + RULERS evidence triple + BAS boundary case
 
 覆盖：
 1. boundary case 自动检测（LLM 漏标时强制纠正）
 2. requires_human_review 强制规则（boundary OR fallback OR low confidence OR low agreement）
 3. abstain_reason 自动填充
 4. 安全终止专用降级（避开 LLM）
-5. fallback 总结仍输出合法 v3 schema
-6. mock LLM 端到端：dimension_history 注入
+5. fallback 总结仍输出合法 v4 schema
+6. mock LLM 端到端：turn_history 注入
 
 运行：
   uv run python -m unittest interview.tests.test_summary_evidence -v
@@ -18,8 +18,6 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from pydantic import ValidationError
-
 from interview.agents.schemas import DecisionEvidence, SummaryOutput
 from interview.agents.summary_agent import (
     SummaryAgent,
@@ -27,7 +25,7 @@ from interview.agents.summary_agent import (
     _avg_agreement,
     _any_fallback,
     _any_low_confidence,
-    _extract_dim_history_text,
+    _extract_turn_history_text,
 )
 
 
@@ -42,20 +40,37 @@ class FakeModel:
         return m
 
 
-def _ev(n=3, dim="math_logic"):
+def _ev(n=3):
     return [
         DecisionEvidence(
-            turn_index=i, dimension=dim, observed_level="MEDIUM",
-            rubric_clause="x", answer_snippet="ab",
+            turn_index=i, question_focus="算法",
+            answer_snippet="ab", rationale="ab", impact="neutral",
         )
         for i in range(n)
     ]
 
 
-def _qa_with_dims(score=5, agreement=1.0, conf="high", fallback=False):
+def _qa_v4(score=5, agreement=1.0, conf="high", fallback=False, answer="abcdef"):
+    """v4 score_details 结构（含 evidence_quote / question_focus）"""
     return {
         "question": "q",
-        "answer": "a",
+        "answer": answer,
+        "score_details": {
+            "score": score,
+            "evidence_quote": "ab",
+            "question_focus": "算法",
+            "agreement": agreement,
+            "confidence_level": conf,
+            "fallback_used": fallback,
+        },
+    }
+
+
+def _qa_legacy_v3(score=5, agreement=1.0, conf="high", fallback=False):
+    """v3 旧数据：score_details 含 dimensions 数组（用于兼容性测试）"""
+    return {
+        "question": "q",
+        "answer": "abcdef",
         "score_details": {
             "score": score,
             "agreement": agreement,
@@ -69,7 +84,6 @@ def _qa_with_dims(score=5, agreement=1.0, conf="high", fallback=False):
                     "evidence_quote": "示例",
                     "rubric_clause": "rubric",
                     "confidence": conf,
-                    "model_name": "fake",
                 }
             ],
         },
@@ -111,8 +125,8 @@ class HelperFunctions(unittest.TestCase):
 
     def test_avg_agreement(self):
         qa = [
-            _qa_with_dims(agreement=0.8),
-            _qa_with_dims(agreement=0.9),
+            _qa_v4(agreement=0.8),
+            _qa_v4(agreement=0.9),
         ]
         self.assertAlmostEqual(_avg_agreement(qa), 0.85)
 
@@ -120,28 +134,27 @@ class HelperFunctions(unittest.TestCase):
         self.assertEqual(_avg_agreement([]), 1.0)
 
     def test_any_fallback_true(self):
-        qa = [_qa_with_dims(fallback=True)]
+        qa = [_qa_v4(fallback=True)]
         self.assertTrue(_any_fallback(qa))
 
     def test_any_low_confidence_true(self):
-        qa = [_qa_with_dims(conf="low")]
+        qa = [_qa_v4(conf="low")]
         self.assertTrue(_any_low_confidence(qa))
 
-    def test_extract_dim_history_text_v3(self):
-        qa = [_qa_with_dims()]
-        text = _extract_dim_history_text(qa)
+    def test_extract_turn_history_v4(self):
+        qa = [_qa_v4()]
+        text = _extract_turn_history_text(qa)
         self.assertIn("Turn 0", text)
-        self.assertIn("math_logic", text)
-        self.assertIn("MEDIUM", text)
+        self.assertIn("question_focus", text)
+        self.assertIn("evidence_quote", text)
 
-    def test_extract_dim_history_legacy(self):
-        # v2 旧数据：score_details 没有 dimensions，只有 score+breakdown
-        qa = [{
-            "question": "q", "answer": "a",
-            "score_details": {"score": 5, "breakdown": {"math_logic": 2}},
-        }]
-        text = _extract_dim_history_text(qa)
-        self.assertIn("(legacy)", text)
+    def test_extract_turn_history_legacy_v3(self):
+        # v3 旧数据：score_details 没有 evidence_quote/question_focus，只有 dimensions
+        qa = [_qa_legacy_v3()]
+        text = _extract_turn_history_text(qa)
+        self.assertIn("Turn 0", text)
+        # 应回退到从 dimensions 抽取
+        self.assertIn("legacy", text.lower())
 
 
 # ============================================================
@@ -161,6 +174,7 @@ class ValidateSummaryResult(unittest.TestCase):
             "final_decision": "reject",
             "overall_score": score,
             "summary": "...",
+            "overall_analysis": "整体分析",
             "decision_evidence": [],
             "boundary_case": False,
             "decision_confidence": "high",
@@ -177,35 +191,33 @@ class ValidateSummaryResult(unittest.TestCase):
 
     def test_grade_synced_with_score(self):
         data = self._llm_data(score=7.0)
-        # LLM 给的 grade=C，但 score=7.0 应该是 B
         out = self.sa._validate_summary_result(data, 7.0, [])
         self.assertEqual(out["final_grade"], "B")
         self.assertEqual(out["final_decision"], "conditional")
 
     def test_fallback_triggers_review(self):
-        data = self._llm_data(score=7.6)  # 非边界
-        qa = [_qa_with_dims(fallback=True)]
+        data = self._llm_data(score=7.6)
+        qa = [_qa_v4(fallback=True)]
         out = self.sa._validate_summary_result(data, 7.6, qa)
         self.assertTrue(out["requires_human_review"])
         self.assertIn("fallback", out["abstain_reason"])
 
     def test_low_agreement_triggers_review(self):
-        data = self._llm_data(score=8.0)  # 非边界
-        qa = [_qa_with_dims(agreement=0.4) for _ in range(3)]  # avg=0.4
+        data = self._llm_data(score=8.0)
+        qa = [_qa_v4(agreement=0.4) for _ in range(3)]
         out = self.sa._validate_summary_result(data, 8.0, qa)
         self.assertTrue(out["requires_human_review"])
         self.assertIn("一致性", out["abstain_reason"])
 
     def test_low_confidence_triggers_review(self):
         data = self._llm_data(score=7.6)
-        qa = [_qa_with_dims(conf="low")]
+        qa = [_qa_v4(conf="low")]
         out = self.sa._validate_summary_result(data, 7.6, qa)
         self.assertTrue(out["requires_human_review"])
 
     def test_high_confidence_no_review(self):
-        data = self._llm_data(score=7.6)  # 非边界
-        # qa score=8（mean=8.0），LLM 给 7.6 → 差 0.4 < 0.5 → 不覆盖；7.6 不在 boundary
-        qa = [_qa_with_dims(score=8, agreement=0.9, conf="high") for _ in range(3)]
+        data = self._llm_data(score=7.6)
+        qa = [_qa_v4(score=8, agreement=0.9, conf="high") for _ in range(3)]
         out = self.sa._validate_summary_result(data, 7.6, qa)
         self.assertFalse(out["requires_human_review"])
         self.assertEqual(out["decision_confidence"], "high")
@@ -232,6 +244,10 @@ class SecurityTermination(unittest.TestCase):
         self.assertEqual(result["overall_score"], 0.0)
         self.assertGreaterEqual(len(result["decision_evidence"]), 3)
         self.assertTrue(result.get("security_termination"))
+        # v4 字段：每条 evidence 应有 question_focus / rationale
+        for ev in result["decision_evidence"]:
+            self.assertIn("question_focus", ev)
+            self.assertIn("rationale", ev)
 
 
 class FallbackSummary(unittest.TestCase):
@@ -242,16 +258,19 @@ class FallbackSummary(unittest.TestCase):
         self.sa.logger = logging.getLogger("test")
 
     def test_fallback_with_qa_history(self):
-        qa = [_qa_with_dims(score=3) for _ in range(5)]
+        qa = [_qa_v4(score=3) for _ in range(5)]
         result = self.sa._generate_fallback_summary("候选人 X", 3.0, qa)
         self.assertEqual(result["final_grade"], "D")
         self.assertGreaterEqual(len(result["decision_evidence"]), 3)
         self.assertTrue(result["requires_human_review"])
         self.assertEqual(result["decision_confidence"], "low")
         self.assertEqual(result["note"], "Fallback summary")
+        # v4 字段
+        for ev in result["decision_evidence"]:
+            self.assertIn("question_focus", ev)
+            self.assertIn("rationale", ev)
 
     def test_fallback_without_qa_history(self):
-        # qa_history 空 → 仍能凑齐 3 条占位 evidence
         result = self.sa._generate_fallback_summary("候选人 Y", 5.5, [])
         self.assertGreaterEqual(len(result["decision_evidence"]), 3)
         self.assertTrue(result["requires_human_review"])
@@ -272,18 +291,20 @@ class MockedSummary(unittest.IsolatedAsyncioTestCase):
         self.sa = SummaryAgent(self.model)
 
     def _make_summary_response(self, score=7.0, evidence_n=3):
-        """构造一个合法的 SummaryOutput LLM 返回值"""
+        """构造一个合法的 SummaryOutput LLM 返回值（v4 字段）"""
         return SummaryOutput(
             final_grade="B",
             final_decision="conditional",
             overall_score=score,
             summary="候选人表现良好",
+            overall_analysis="整体分析",
             strengths=["逻辑清晰"],
             weaknesses=["细节不足"],
             decision_evidence=[
                 DecisionEvidence(
-                    turn_index=i, dimension="math_logic", observed_level="MEDIUM",
-                    rubric_clause="rubric", answer_snippet="ab",
+                    turn_index=i, question_focus="算法",
+                    answer_snippet="ab", rationale="rationale",
+                    impact="neutral",
                 )
                 for i in range(evidence_n)
             ],
@@ -296,8 +317,7 @@ class MockedSummary(unittest.IsolatedAsyncioTestCase):
         self.sa._structured_model.ainvoke = AsyncMock(
             return_value=self._make_summary_response(score=7.6)
         )
-        # qa score=8（mean=8.0），LLM 给 7.6 → 差 0.4 < 0.5 容忍 → 不覆盖；7.6 也不在 boundary 区间内
-        qa = [_qa_with_dims(score=8, agreement=0.9, conf="high") for _ in range(5)]
+        qa = [_qa_v4(score=8, agreement=0.9, conf="high") for _ in range(5)]
         result = await self.sa.aprocess({
             "candidate_name": "张三",
             "resume_data": {},
@@ -312,11 +332,10 @@ class MockedSummary(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(result["decision_evidence"]), 3)
 
     async def test_boundary_score_forces_review_even_when_llm_says_no(self):
-        # LLM 返回 boundary_case=False，但实际 score=6.9 应该是 boundary
         self.sa._structured_model.ainvoke = AsyncMock(
             return_value=self._make_summary_response(score=6.9)
         )
-        qa = [_qa_with_dims(score=7, agreement=0.9, conf="high") for _ in range(5)]
+        qa = [_qa_v4(score=7, agreement=0.9, conf="high") for _ in range(5)]
         result = await self.sa.aprocess({
             "candidate_name": "李四",
             "resume_data": {},
@@ -324,13 +343,11 @@ class MockedSummary(unittest.IsolatedAsyncioTestCase):
             "average_score": 6.9,
             "security_summary": {},
         })
-        # 自动覆盖 LLM 输出
         self.assertTrue(result["boundary_case"])
         self.assertTrue(result["requires_human_review"])
         self.assertIsNotNone(result["abstain_reason"])
 
     async def test_security_termination_skips_llm(self):
-        # 即使 LLM 会失败，安全终止路径也直接走降级
         self.sa._structured_model.ainvoke = AsyncMock(side_effect=RuntimeError("should not call"))
         result = await self.sa.aprocess({
             "candidate_name": "王五",
@@ -347,7 +364,7 @@ class MockedSummary(unittest.IsolatedAsyncioTestCase):
 
     async def test_llm_failure_falls_back(self):
         self.sa._structured_model.ainvoke = AsyncMock(side_effect=RuntimeError("LLM down"))
-        qa = [_qa_with_dims(score=5) for _ in range(4)]
+        qa = [_qa_v4(score=5) for _ in range(4)]
         result = await self.sa.aprocess({
             "candidate_name": "赵六",
             "resume_data": {},

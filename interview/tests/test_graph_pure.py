@@ -64,14 +64,8 @@ def _build_graph(session, *, security_block=False, summary_dict=None):
     scoring_agent = MagicMock()
     scoring_agent.aprocess = AsyncMock(return_value={
         "score": 6,
-        "dimensions": [
-            {"dimension": d, "level": "MEDIUM", "score": s, "evidence_quote": "ab",
-             "rubric_clause": "x", "confidence": "high"}
-            for d, s in zip(
-                ["math_logic", "reasoning_rigor", "communication", "collaboration", "growth_potential"],
-                [2, 1, 1, 1, 1],
-            )
-        ],
+        "evidence_quote": "ab",
+        "question_focus": "算法",
         "agreement": 1.0, "confidence_level": "high", "requires_human_review": False,
         "fallback_used": False, "reasoning": "test",
     })
@@ -90,7 +84,8 @@ def _build_graph(session, *, security_block=False, summary_dict=None):
     summary = MagicMock()
     summary.aprocess = AsyncMock(return_value=summary_dict or {
         "final_grade": "C", "final_decision": "reject", "overall_score": 6.0,
-        "summary": "...", "decision_evidence": [], "boundary_case": False,
+        "summary": "...", "overall_analysis": "...",
+        "decision_evidence": [], "boundary_case": False,
         "decision_confidence": "medium", "requires_human_review": False,
     })
 
@@ -200,7 +195,8 @@ class GraphTopology(unittest.IsolatedAsyncioTestCase):
         }
         mocks["summary_agent"].aprocess.return_value = {
             "final_grade": "B", "final_decision": "conditional", "overall_score": 7.5,
-            "summary": "...", "decision_evidence": [], "boundary_case": False,
+            "summary": "...", "overall_analysis": "...",
+            "decision_evidence": [], "boundary_case": False,
             "decision_confidence": "high", "requires_human_review": False,
         }
 

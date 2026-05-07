@@ -66,7 +66,7 @@ class InterviewGraphState(TypedDict, total=False):
 
     # 节点产出（按拓扑顺序）
     security_check: Optional[Dict[str, Any]]      # security_node
-    scoring_result: Optional[Dict[str, Any]]      # scoring_node — ScoringOutput dict (含 dimensions)
+    scoring_result: Optional[Dict[str, Any]]      # scoring_node — ScoringOutput dict (含 evidence_quote)
     persisted: bool                                # persist_node
     is_ready: bool                                 # readiness_node
     similar_cases_context: str                     # retrieval_node
@@ -174,7 +174,7 @@ def build_interview_graph(
         }
 
     # ============================================================
-    # 节点 2：scoring_node — MTS 多维度评分（W1 + W2 接入）
+    # 节点 2：scoring_node — 单题整体评分（v4 + ensemble + RAG anchors）
     # ============================================================
     async def scoring_node(state: InterviewGraphState) -> Dict[str, Any]:
         session_id = state["session_id"]
@@ -631,7 +631,7 @@ def build_interview_graph(
 
 def create_mongo_checkpointer(
     db_name: str = "interview",
-    collection: str = "langgraph_checkpoints_v3",  # v3 新 collection，老的弃用
+    collection: str = "langgraph_checkpoints_v4",  # v4 单分制重构后启用，旧 v3 自然过期
 ) -> MongoDBSaver:
     """构造基于现有 MongoDB 共享连接的 LangGraph checkpointer"""
     client: MongoClient = get_mongo_client()

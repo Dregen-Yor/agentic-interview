@@ -1,19 +1,18 @@
 """
-Pydantic Schemas — 所有 Agent 的结构化输出契约（v3 - W1 论文落地）
+Pydantic Schemas — 所有 Agent 的结构化输出契约（v4 - 单题整体评分）
 
-v3 改动（2026-05-03，论文驱动重构）：
-- 引入 `DimensionScore`：MTS (arXiv:2404.04941) 单维度独立评分契约
-- 引入 `DecisionEvidence`：RULERS (arXiv:2601.08654) evidence-anchored 三元组
-- `ScoringOutput` v3：总分由公式聚合（score = sum(dim.score)），不再让 LLM 自由输出
-  + `model_validator` 强制内部一致性（score 必须等于维度求和；5 维度齐全）
-  + 新增 `agreement` / `confidence_level` / `requires_human_review` / `fallback_used`（CISC arXiv:2502.06233）
-- `SummaryOutput` v3：必填 `decision_evidence >= 3`；新增 `boundary_case` / `requires_human_review` / `decision_confidence` / `abstain_reason`（BAS arXiv:2604.03216 selective prediction）
+v4 改动（2026-05-07，单分制重构）：
+- 删除 `DimensionScore` / `DimensionKey` / `DIMENSION_MAX_SCORE` / `DetailedAnalysis`
+- `ScoringOutput` 改为单一 0-10 总分 + evidence_quote + question_focus + ensemble 元数据
+- `DecisionEvidence` 重写：去 dimension/observed_level，加 question_focus / rationale
+- `SummaryOutput` 删除 `detailed_analysis`，改为单字段 `overall_analysis: str`
+- 评分仍然是 RULERS 证据锚定 + CISC 双模型 ensemble，但维度独立打分被废弃
 
 设计原则：
-- 维度上限由 `DimensionScore.check_score_bound` 在 schema 层校验（math_logic 0-4, reasoning_rigor 0-2, ...）
-- `evidence_quote` 仅约束最小长度；是否出现在 answer 中由 ScoringAgent 在 fuzzy match 阶段降 confidence 而非拒绝
-- 完全删除 v2 的 `ScoringBreakdown / letter / strengths / weaknesses / suggestions` 字段（破坏性重构，前端同步更新）
-- v2 删除的字段已通过 `qa_models.get_score()` 在读旧数据时兼容
+- LLM 只看「题目考察方向 + 答案正确性」给一个总分；不再分 5 维度
+- evidence_quote 仍是必填，由 ScoringAgent fuzzy match 校验，不通过时降 confidence（不 reject）
+- agreement 公式从「level 投票一致率」改为「1 - (max - min) / 10」
+- 旧 v3 数据中的 dimensions / detailed_analysis 字段在新 schema 中被忽略
 """
 
 from enum import Enum
@@ -72,25 +71,6 @@ class Involvement(str, Enum):
     HIGH = "HIGH"
 
 
-# 5 维度统一 key（ScoringAgent / SummaryAgent / ResumeParser 共用）
-DimensionKey = Literal[
-    "math_logic",
-    "reasoning_rigor",
-    "communication",
-    "collaboration",
-    "growth_potential",
-]
-
-# 5 维度的分数上限（与 interview/rubrics.py::RUBRIC_DIMENSIONS 的 weight 字段对齐）
-DIMENSION_MAX_SCORE = {
-    "math_logic": 4,
-    "reasoning_rigor": 2,
-    "communication": 2,
-    "collaboration": 1,
-    "growth_potential": 1,
-}
-
-
 # ============================================================
 # QuestionGeneratorAgent 输出
 # ============================================================
@@ -129,101 +109,69 @@ class QuestionVerificationOutput(BaseModel):
 
 
 # ============================================================
-# ScoringAgent v3 — MTS + RULERS 单维度 + ensemble
+# ScoringAgent v4 — 单题整体评分（保留 evidence + ensemble）
 # ============================================================
 
-class DimensionScore(BaseModel):
-    """单维度评分 — RULERS evidence-anchored + MTS 单 prompt 单维度
+class SingleScoreCandidate(BaseModel):
+    """单模型一次评分输出（ScoringAgent 内部使用，N 模型并行后聚合为 ScoringOutput）
 
-    论文锚点：
-    - MTS (arXiv:2404.04941): 每维度独立 prompt，retrieve quotes 作为证据
-    - RULERS (arXiv:2601.08654): unverifiable reasoning 是失败模式之一，必须 evidence-anchored
+    LLM 通过 with_structured_output 直接产出此 schema。
     """
     model_config = ConfigDict(extra="ignore")
 
-    dimension: Literal[
-        "math_logic",
-        "reasoning_rigor",
-        "communication",
-        "collaboration",
-        "growth_potential",
-    ] = Field(..., description="5 维度之一")
-    level: Literal["LOW", "MEDIUM", "HIGH"] = Field(..., description="基于 rubric 的等级判断")
-    score: int = Field(
-        ...,
-        ge=0,
-        description="该维度得分；上限由 DIMENSION_MAX_SCORE 在 model_validator 中校验",
-    )
+    score: int = Field(..., ge=0, le=10, description="总分 0-10")
     evidence_quote: str = Field(
         ...,
         min_length=2,
-        description="候选人答案中支撑此判断的原文片段（应在 answer 内，由 ScoringAgent fuzzy match 校验）",
+        description="候选人答案中支撑此评分的原文片段（fuzzy match 校验在 answer 内）",
     )
-    rubric_clause: str = Field(
+    question_focus: str = Field(
         ...,
-        description="rubric 中 LOW/MEDIUM/HIGH 的对应描述文字（来自 RUBRIC_DIMENSIONS）",
+        min_length=2,
+        description="题目考察方向（自由短语，如「递归边界条件」「DP 状态转移」）",
     )
     confidence: Literal["high", "medium", "low"] = Field(
         default="medium",
         description="LLM 自报置信度；CISC 加权聚合时使用",
     )
-    reasoning: str = Field(default="", description="为何给出该 level / score")
-    model_name: Optional[str] = Field(
-        default=None, description="ensemble 时记录哪个模型给的分（如 gpt-5-mini / gemini-2.5-flash）"
-    )
-
-    @model_validator(mode="after")
-    def check_score_bound(self):
-        cap = DIMENSION_MAX_SCORE[self.dimension]
-        if self.score > cap:
-            raise ValueError(
-                f"{self.dimension} 分数 {self.score} 超过上限 {cap}（请检查 LLM 输出）"
-            )
-        return self
+    reasoning: str = Field(default="", description="为何给此分；1-2 句中文")
+    model_name: Optional[str] = Field(default=None, description="ensemble 时记录哪个模型")
 
 
 class ScoringOutput(BaseModel):
-    """聚合评分输出 — 总分由公式聚合，model_validator 强制内部一致性
+    """聚合评分输出 — N 模型 CISC 加权聚合后的最终单题评分
 
     论文锚点：
-    - CISC (arXiv:2502.06233): confidence-weighted ensemble，agreement < 0.5 触发 review
-    - LLMs Cannot Self-Correct (ICLR 2024): 多模型 ensemble 才有效，不要同模型自我批评
+    - RULERS (arXiv:2601.08654): evidence-anchored decoding，必须给 evidence_quote
+    - CISC (arXiv:2502.06233): confidence-weighted ensemble，agreement < 阈值触发 review
+    - LLMs Cannot Self-Correct (ICLR 2024): 多模型 ensemble 才有效
     """
     model_config = ConfigDict(extra="ignore")
 
-    score: int = Field(..., ge=0, le=10, description="5 维度 score 求和（公式聚合，不允许 LLM 自由输出）")
-    dimensions: List[DimensionScore] = Field(
-        ..., min_length=5, max_length=5, description="必须 5 项齐全且 dimension 各异"
+    score: int = Field(..., ge=0, le=10, description="单题总分（CISC 加权聚合后）")
+    evidence_quote: str = Field(
+        ...,
+        min_length=2,
+        description="候选人答案中支撑此评分的原文片段",
+    )
+    question_focus: str = Field(
+        ...,
+        description="题目考察方向（自由短语）",
     )
     agreement: float = Field(
         default=1.0,
         ge=0.0,
         le=1.0,
-        description="多模型 ensemble 一致性（单模型时 = 1.0）",
+        description="多模型一致性 = 1 - (max_score - min_score) / 10；单模型时 = 1.0",
     )
     confidence_level: Literal["high", "medium", "low"] = Field(default="medium")
     requires_human_review: bool = Field(default=False)
     fallback_used: bool = Field(default=False, description="是否触发了 fallback（LLM 全部失败时）")
     reasoning: str = Field(default="")
-
-    @model_validator(mode="after")
-    def check_consistency(self):
-        # 5 维度 key 必须齐全且唯一
-        keys = {d.dimension for d in self.dimensions}
-        expected = set(DIMENSION_MAX_SCORE.keys())
-        if keys != expected:
-            missing = expected - keys
-            extra = keys - expected
-            raise ValueError(
-                f"维度 key 不正确（缺失 {missing}，多余 {extra}）；必须恰好 5 项"
-            )
-        # 总分必须 = 维度求和（强一致性）
-        dim_sum = sum(d.score for d in self.dimensions)
-        if self.score != dim_sum:
-            raise ValueError(
-                f"score 内部不一致：score={self.score} 但 dimensions 求和={dim_sum}"
-            )
-        return self
+    model_name: Optional[str] = Field(
+        default=None,
+        description="ensemble 来源标记，单模型为 model_name，多模型为 ensemble(N)",
+    )
 
 
 # ============================================================
@@ -242,31 +190,29 @@ class SecurityOutput(BaseModel):
 
 
 # ============================================================
-# SummaryAgent v3 — RULERS evidence triple + BAS selective prediction
+# SummaryAgent v4 — RULERS evidence triple + BAS selective prediction
 # ============================================================
 
 class DecisionEvidence(BaseModel):
-    """SummaryAgent 决策证据三元组 — RULERS-style
+    """SummaryAgent 决策证据三元组 — RULERS-style（v4 单分制版本）
 
-    每条证据指向一个具体 turn，明确该轮在某维度上的表现，并引用 rubric 对应描述。
-    招生老师可凭此追溯决策依据，避免「黑盒决策」。
+    每条证据指向一个具体 turn，引用题目考察方向 + 答案片段，并附一句话说明
+    为何此证据支持最终决策，便于招生老师追溯。
     """
     model_config = ConfigDict(extra="ignore")
 
     turn_index: int = Field(..., ge=0, description="对应 qa_history 中的轮次（0-indexed）")
-    dimension: Literal[
-        "math_logic",
-        "reasoning_rigor",
-        "communication",
-        "collaboration",
-        "growth_potential",
-    ] = Field(..., description="此证据涉及的 rubric 维度")
-    observed_level: Literal["LOW", "MEDIUM", "HIGH"] = Field(
-        ..., description="该轮该维度的观察等级"
+    question_focus: str = Field(
+        ...,
+        description="该轮题目考察方向（来自 score_details.question_focus）",
     )
-    rubric_clause: str = Field(..., description="rubric 中对应等级的描述文字（不要改写）")
     answer_snippet: str = Field(
         ..., min_length=2, description="候选人答案的关键片段（应是 answer 子串）"
+    )
+    rationale: str = Field(
+        ...,
+        min_length=2,
+        description="一句话说明为何此证据支撑最终决策（中文）",
     )
     impact: Literal["positive", "negative", "neutral"] = Field(
         default="neutral", description="该证据对最终决策的影响方向"
@@ -280,18 +226,8 @@ class Recommendations(BaseModel):
     for_program: str = Field(default="")
 
 
-class DetailedAnalysis(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    math_logic: str = Field(default="")
-    reasoning_rigor: str = Field(default="")
-    communication: str = Field(default="")
-    collaboration: str = Field(default="")
-    growth_potential: str = Field(default="")
-
-
 class SummaryOutput(BaseModel):
-    """新版 SummaryOutput — 强制证据链 + boundary case 显式标记
+    """新版 SummaryOutput — 单分制 + 强制证据链 + boundary case 显式标记
 
     论文锚点：
     - RULERS (arXiv:2601.08654): evidence-anchored decoding，决策必须可审计
@@ -303,16 +239,19 @@ class SummaryOutput(BaseModel):
     final_decision: FinalDecision = Field(default=FinalDecision.conditional)
     overall_score: float = Field(..., ge=0, le=10)
     summary: str = Field(default="")
+    overall_analysis: str = Field(
+        default="",
+        description="整体表现分析（替代 v3 的 detailed_analysis 5 字段）",
+    )
     strengths: List[str] = Field(default_factory=list)
     weaknesses: List[str] = Field(default_factory=list)
     recommendations: Recommendations = Field(default_factory=Recommendations)
-    detailed_analysis: DetailedAnalysis = Field(default_factory=DetailedAnalysis)
 
-    # ---------- v3 新增：证据链 + boundary case ----------
+    # ---------- v3 保留：证据链 + boundary case ----------
     decision_evidence: List[DecisionEvidence] = Field(
         ...,
         min_length=3,
-        description="必须给出至少 3 条证据三元组；建议覆盖 ≥ 2 个维度",
+        description="必须给出至少 3 条证据三元组",
     )
     boundary_case: bool = Field(
         default=False,
@@ -333,6 +272,11 @@ class SummaryOutput(BaseModel):
 # ============================================================
 
 class DimensionSignals(BaseModel):
+    """简历解析阶段的 5 维度信号 — 仅出题端使用，与评分链路解耦
+
+    注：v4 评分链路已删除 5 维度，但 ResumeParser 仍按维度抽取信号供
+    QuestionGeneratorAgent 在弱维度上多出题（见 question_generator.py 引用 RUBRIC_DIMENSIONS）。
+    """
     model_config = ConfigDict(extra="ignore")
 
     math_logic: DimensionSignal = Field(default=DimensionSignal.NO_SIGNAL)

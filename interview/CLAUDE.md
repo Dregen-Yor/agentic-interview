@@ -75,19 +75,21 @@ def some_view(request):
 
 所有模型均通过 `langchain_openai.ChatOpenAI` 封装，timeout=30s。`doubao_model` 通过 `extra_body` 禁用 thinking 模式。`_env_first()` 辅助函数用于 doubao 的 base_url 兼容旧环境变量名 `DOUBA_BASE_URL`。
 
-## 评分维度（`rubrics.py`）
+## 评分体系（v4 起）
 
-`RUBRIC_DIMENSIONS` 字典定义 5 个维度，每个维度含 `name`、`weight`、`levels`（LOW/MEDIUM/HIGH 英文描述）：
+**评分流程**：`ScoringAgent` 通过 `prompts/scoring_holistic.yaml` 让 LLM 直接基于「题目考察方向 + 答案正确性」给一个 **0-10 总分** + `evidence_quote` + `question_focus`，N 模型并行后通过 CISC confidence-weighted 聚合得到最终 `ScoringOutput`。**不再按 5 维度独立打分**。
 
-| 维度键 | 中文名 | 分值范围 |
-|--------|--------|---------|
-| `math_logic` | 数学/逻辑基础 | 1-4 |
-| `reasoning_rigor` | 推理严谨性 | 1-2 |
-| `communication` | 表达与沟通 | 1-2 |
-| `collaboration` | 合作与社交基线 | 0-1 |
-| `growth_potential` | 成长潜力 | 0-1 |
+**rubric 用途**：`rubrics.py::RUBRIC_DIMENSIONS` 字典仍保留 5 个维度（math_logic / reasoning_rigor / communication / collaboration / growth_potential），但**仅用于出题阶段**（`QuestionGeneratorAgent` / `ResumeParser` 在弱维度上多出题），与评分链路解耦。
 
-`format_rubric_for_prompt()` 将维度格式化为可嵌入 LLM prompt 的文本。该模块被 `QuestionGeneratorAgent` 和 `ResumeParser` 引用。
+| 维度键 | 中文名 | 用途 |
+|--------|--------|------|
+| `math_logic` | 数学/逻辑基础 | 出题信号 |
+| `reasoning_rigor` | 推理严谨性 | 出题信号 |
+| `communication` | 表达与沟通 | 出题信号 |
+| `collaboration` | 合作与社交基线 | 出题信号 |
+| `growth_potential` | 成长潜力 | 出题信号 |
+
+**Grade 阈值**（基于 0-10 总分平均）：A ≥ 8.5 / B ≥ 7.0 / C ≥ 5.0 / D < 5.0。
 
 ## 数据模型
 
@@ -114,6 +116,7 @@ def some_view(request):
 
 | 日期 | 变更 |
 |------|------|
+| 2026-05-07 | **W4 单题整体评分（v4，破坏性）**：`agents/schemas.py` 删除 `DimensionScore` / `DIMENSION_MAX_SCORE` / `DetailedAnalysis`；`ScoringOutput` 改为单一 score + evidence_quote + question_focus；`DecisionEvidence` 字段重写（dimension/observed_level/rubric_clause → question_focus/rationale）；`SummaryOutput.detailed_analysis` → `overall_analysis: str`；新增 `prompts/scoring_holistic.yaml`，删除 `scoring_dimension.yaml` + `scoring_agent.yaml`；`agents/scoring_agent.py` 重写为 N 模型并行 + CISC 加权（不再循环 5 维度）；`agents/summary_agent.py` `_extract_dim_history_text` → `_extract_turn_history_text`；`agents/graph.py` checkpoint v3 → v4；`rubrics.py::RUBRIC_DIMENSIONS` 仅供出题用，与评分链路解耦；测试 151 → 143（5 维度强制覆盖用例报废，新增单分制 + ensemble disagreement 用例） |
 | 2026-05-04 | **W1-W3 论文驱动重构（v3）**：`consumers.py` scoring 改双模型 ensemble (`[doubao, gemini]`)；新增 `agents/utils.py`（共享 `validate_quote_in_answer`，3-gram recall fuzzy match）；`agents/scoring_agent.py` 改 MTS 5 维度独立 + CISC ensemble + RAG anchors；`agents/summary_agent.py` 加 `decision_evidence`/`boundary_case`/`requires_human_review`；新增 `agents/question_verifier.py` (CoVe factor+revise)；`agents/graph.py` 重写为 6 节点 pure-function 拓扑；`agents/memory/store.py` `_compute_importance` 改 PER (`α=0.6`) + 个性化 baseline；P0 一致性修复（rubric_clause 强制覆盖 + overall_score=mean + decision_evidence turn_index/snippet 校验）；新增 `aes/` 实验模块（不依赖面试代码）；测试 0 → 151 |
 | 2026-04-29 | `consumers.py` 重构：新增 `_pending_tasks` 强引用集 + `_spawn_task()` done_callback 异常处理；`_answer_lock` 串行化 `start_interview` / `process_user_answer`，避免 coordinator 状态机被并发踩坑；`disconnect()` 取消未完成任务 |
 | 2026-04-27 | 删除 `views.py`、新增 `auth_utils.py`、`users.py` 切到共享连接池 + `@jwt_required`、文档同步更新 |
