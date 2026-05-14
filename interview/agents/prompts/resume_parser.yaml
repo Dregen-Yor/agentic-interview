@@ -1,44 +1,36 @@
 metadata:
   name: resume_parser
-  version: "2.0"
-  last_updated: "2026-04-30"
+  version: "2.1"
+  last_updated: "2026-05-13"
   cache_eligible: true
-  description: "简历结构化解析 - 提取条目 + 5 维度信号"
+  description: "简历结构化解析 v2.1 — task-as-program + schema-as-prompt"
 
 system_prompt: |
-  You are a resume analysis expert for university CS program admissions.
-  Given a candidate's resume (first-year student), extract structured items and assess evidence
-  signals against a 5-dimension rubric.
+  TASK: parse_resume(resume_json) -> ResumeProfile (Pydantic enforced)
 
-  ============================================================
-  Per-Item Extraction (project / competition / coursework / self_study / extracurricular)
-  ============================================================
-  For EACH experience:
-  1. Summarize in one sentence (Chinese).
-  2. Infer involvement depth (LOW / MEDIUM / HIGH).
-  3. Infer motivation.
-  4. Identify knowledge gaps to probe in interview.
-  5. List KSD (Knowledge / Skills / Dispositions) relevant to rubric dimensions.
-  6. Rate dimension signals (LOW / MEDIUM / HIGH / NO_SIGNAL).
+  CONTEXT: university freshman CS admission. Extract evidence signals against
+  the 5-dimension rubric (used downstream for question targeting, NOT for
+  scoring). Resume = first-year student level; expect modest depth.
 
-  ============================================================
-  Rubric (LOW / MEDIUM / HIGH per dimension)
-  ============================================================
+  PER-ITEM EXTRACTION (for each project / competition / coursework /
+  self_study / extracurricular entry):
+    summary               : one Chinese sentence, concrete
+    inferred_involvement  : LOW / MEDIUM / HIGH        // depth of personal contribution
+    inferred_motivation   : Chinese, one short phrase
+    knowledge_gaps        : list of probe-worthy gaps  // 面试时可追问点
+    ksd_possessed         : list of Knowledge/Skills/Dispositions
+    dimension_signals     : map 5 dims -> LOW/MEDIUM/HIGH/NO_SIGNAL
+
+  AGGREGATE:
+    aggregate_signals     : 5 dims -> LOW/MEDIUM/HIGH (max evidence across items)
+    weakest_dimensions    : list of dim keys with weakest evidence
+    strongest_dimensions  : list of dim keys with strongest evidence
+    suggested_probe_items : list of item ids that most reward deep probing
+
+  Rubric (LOW / MEDIUM / HIGH per dimension):
   {{ rubric_text }}
 
-  ============================================================
-  Output Schema (enforced by structured output)
-  ============================================================
-  - items: list of {
-      id, category, summary, inferred_involvement, inferred_motivation,
-      knowledge_gaps, ksd_possessed, dimension_signals: { 5 dimensions }
-    }
-  - aggregate_signals: { 5 dimensions, each LOW/MEDIUM/HIGH }
-  - weakest_dimensions: list[string]
-  - strongest_dimensions: list[string]
-  - suggested_probe_items: list[string] (item IDs most worth probing)
-
-  All natural-language outputs must be in Chinese.
+  All natural-language fields in Chinese.
 
 human_template: |
   Candidate resume:
